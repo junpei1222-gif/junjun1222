@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1838"/>
+      <stop offset="1" stop-color="#05070f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景（宇宙） -->
+  <rect width="180" height="180" rx="36" fill="url(#bg)"/>
+
+  <g shape-rendering="crispEdges">
+    <!-- 星屑 -->
+    <g fill="#ffffff">
+      <rect x="22" y="26" width="3" height="3"/>
+      <rect x="60" y="18" width="2" height="2" opacity="0.7"/>
+      <rect x="98" y="36" width="3" height="3" opacity="0.85"/>
+      <rect x="108" y="16" width="2" height="2" opacity="0.6"/>
+      <rect x="34" y="150" width="3" height="3" opacity="0.8"/>
+      <rect x="80" y="158" width="2" height="2" opacity="0.6"/>
+      <rect x="120" y="142" width="3" height="3"/>
+      <rect x="164" y="128" width="2" height="2" opacity="0.7"/>
+      <rect x="168" y="62" width="2" height="2" opacity="0.6"/>
+      <rect x="16" y="128" width="2" height="2" opacity="0.6"/>
+    </g>
+    <!-- きらめく星（十字） -->
+    <g fill="#9fe6ff">
+      <rect x="74" y="40" width="3" height="9"/>
+      <rect x="71" y="43" width="9" height="3"/>
+      <rect x="140" y="152" width="3" height="9"/>
+      <rect x="137" y="155" width="9" height="3"/>
+    </g>
+
+    <!-- スピード線 -->
+    <g fill="#3fbfff" opacity="0.35">
+      <rect x="6" y="66" width="18" height="2"/>
+      <rect x="10" y="114" width="14" height="2"/>
+      <rect x="2" y="104" width="10" height="2"/>
+    </g>
+
+    <!-- 自機（右向き・6px ドット） -->
+    <g transform="translate(30,57) scale(6)">
+      <!-- エンジン噴射 -->
+      <rect x="-2" y="4" width="2" height="1" fill="#ff8a2a"/>
+      <rect x="-3" y="5" width="3" height="1" fill="#ffd23f"/>
+      <rect x="-1" y="5" width="1" height="1" fill="#fff6c0"/>
+      <rect x="-2" y="6" width="2" height="1" fill="#ff8a2a"/>
+      <!-- 上翼 -->
+      <rect x="2" y="0" width="3" height="1" fill="#7fe0ff"/>
+      <rect x="2" y="1" width="4" height="1" fill="#4cc3ff"/>
+      <rect x="3" y="2" width="5" height="1" fill="#4cc3ff"/>
+      <!-- 胴体 -->
+      <rect x="1" y="3" width="9" height="1" fill="#9be8ff"/>
+      <rect x="0" y="4" width="12" height="1" fill="#3fbfff"/>
+      <rect x="0" y="5" width="13" height="1" fill="#3fbfff"/>
+      <rect x="0" y="6" width="12" height="1" fill="#2a8fe6"/>
+      <rect x="1" y="7" width="9" height="1" fill="#1a6fd0"/>
+      <!-- 下翼 -->
+      <rect x="3" y="8" width="5" height="1" fill="#1a6fd0"/>
+      <rect x="2" y="9" width="4" height="1" fill="#1a6fd0"/>
+      <rect x="2" y="10" width="3" height="1" fill="#134fa0"/>
+      <!-- コックピット -->
+      <rect x="7" y="4" width="3" height="1" fill="#0a2a52"/>
+      <rect x="8" y="5" width="2" height="1" fill="#0a2a52"/>
+      <rect x="8" y="4" width="1" height="1" fill="#ffffff"/>
+      <!-- 機首 -->
+      <rect x="12" y="5" width="1" height="1" fill="#ffffff"/>
+    </g>
+
+    <!-- レーザー -->
+    <rect x="112" y="83" width="32" height="14" fill="#3fd0ff" opacity="0.35"/>
+    <rect x="112" y="87" width="32" height="6" fill="#e8fdff"/>
+
+    <!-- 爆発（着弾） -->
+    <g transform="translate(142,76) scale(4)">
+      <g fill="#ff6a2a">
+        <rect x="3" y="0" width="1" height="1"/>
+        <rect x="1" y="1" width="1" height="1"/>
+        <rect x="3" y="1" width="1" height="1"/>
+        <rect x="5" y="1" width="1" height="1"/>
+        <rect x="2" y="2" width="3" height="1"/>
+        <rect x="0" y="3" width="7" height="1"/>
+        <rect x="2" y="4" width="3" height="1"/>
+        <rect x="1" y="5" width="1" height="1"/>
+        <rect x="3" y="5" width="1" height="1"/>
+        <rect x="5" y="5" width="1" height="1"/>
+        <rect x="3" y="6" width="1" height="1"/>
+      </g>
+      <g fill="#ffd23f">
+        <rect x="3" y="2" width="1" height="1"/>
+        <rect x="2" y="3" width="3" height="1"/>
+        <rect x="3" y="4" width="1" height="1"/>
+      </g>
+      <rect x="3" y="3" width="1" height="1" fill="#ffffff"/>
+    </g>
+
+    <!-- 敵機（左向き・4px ドット） -->
+    <g transform="translate(132,24) scale(4)">
+      <rect x="5" y="0" width="2" height="1" fill="#ff6b8e"/>
+      <rect x="3" y="1" width="5" height="1" fill="#ff3b6b"/>
+      <rect x="0" y="2" width="8" height="1" fill="#ff3b6b"/>
+      <rect x="0" y="3" width="8" height="1" fill="#d02655"/>
+      <rect x="3" y="4" width="5" height="1" fill="#b0204a"/>
+      <rect x="5" y="5" width="2" height="1" fill="#8a1838"/>
+      <rect x="1" y="2" width="2" height="2" fill="#ffe066"/>
+    </g>
+  </g>
+</svg>

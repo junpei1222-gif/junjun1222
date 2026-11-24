@@ -6,9 +6,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="蒼穹ベクター">
+<meta name="apple-mobile-web-app-title" content="銀河ウォーズ">
 <meta name="theme-color" content="#05070f">
-<title>蒼穹ベクター — AZURE VECTOR</title>
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>銀河ウォーズ — GALAXY WARS</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
                touch-action: none; overscroll-behavior: none;
@@ -1797,8 +1799,8 @@ function drawTitle() {
   const g = ctx.createLinearGradient(0, 100, 0, 170);
   g.addColorStop(0, '#e9f6ff'); g.addColorStop(0.5, '#6fc8ff'); g.addColorStop(1, '#2a5fd0');
   ctx.font = '900 70px ' + FONT;
-  ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.strokeText('蒼穹ベクター', W / 2, 135);
-  ctx.fillStyle = g; ctx.fillText('蒼穹ベクター', W / 2, 135);
+  ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.strokeText('銀河ウォーズ', W / 2, 135);
+  ctx.fillStyle = g; ctx.fillText('銀河ウォーズ', W / 2, 135);
   ctx.font = 'bold 20px ' + FONT; ctx.fillStyle = '#9fc3ff'; ctx.fillText('A Z U R E   V E C T O R', W / 2, 190);
   ctx.font = '16px ' + FONT; ctx.fillStyle = '#d8e4ff';
   const lines = ['移動：矢印キー / WASD　　ショット：Z / スペース（長押しで連射）',
