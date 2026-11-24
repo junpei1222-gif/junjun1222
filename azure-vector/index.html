@@ -1,0 +1,1951 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="蒼穹ベクター">
+<meta name="theme-color" content="#05070f">
+<title>蒼穹ベクター — AZURE VECTOR</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+               touch-action: none; overscroll-behavior: none;
+               -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+               -webkit-tap-highlight-color: transparent; }
+  body { display: flex; align-items: center; justify-content: center;
+         position: fixed; left: 0; top: 0; right: 0; bottom: 0; }
+  canvas { display: block; background: #02030a; outline: none; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0"></canvas>
+<script>
+(() => {
+'use strict';
+
+// ============================================================
+//  基本設定
+// ============================================================
+const W = 960, H = 540;
+const STEP = 1000 / 60;            // 固定ステップ（60更新/秒）
+const TAU = Math.PI * 2;
+const FONT = '"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic UI","Yu Gothic","Meiryo","Noto Sans JP",sans-serif';
+const BASE_SCROLL = 1.6;           // 強制スクロール速度(px/フレーム)
+const FORT_WX = 4300;              // 要塞のワールドX
+const BOSS_AT = 8700;              // ボス出現スクロール位置
+const OPT_GAP = 12;                // オプションの追従間隔（移動履歴フレーム数）
+const SHIELD_HP = 6;
+const PW_LABELS = ['スピード', 'ミサイル', 'ダブル', 'レーザー', 'オプション', 'シールド'];
+const PW_NAMES  = ['スピードアップ！', 'ミサイル装備！', 'ダブル装備！', 'レーザー装備！', 'オプション追加！', 'シールド展開！'];
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext && cv.getContext('2d');
+if (!ctx) {
+  // Canvas 2D が使えない環境ではメッセージを出して起動を止める
+  const msg = document.createElement('p');
+  msg.textContent = 'このブラウザでは Canvas 2D を利用できないため、ゲームを起動できません。別のブラウザでお試しください。';
+  msg.style.cssText = 'color:#fff;font:16px sans-serif;padding:24px;text-align:center;max-width:640px;line-height:1.7;';
+  cv.replaceWith(msg);
+  return;
+}
+let scaleX = 1, scaleY = 1;
+let cssScale = 1;                  // 表示上のCSSピクセル / ゲーム座標（タッチUIの大きさ計算に使う）
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const cw = Math.max(1, Math.floor(W * s)), ch = Math.max(1, Math.floor(H * s));
+  cv.style.width = cw + 'px';
+  cv.style.height = ch + 'px';
+  cv.width = Math.max(1, Math.round(cw * dpr));
+  cv.height = Math.max(1, Math.round(ch * dpr));
+  scaleX = cv.width / W;
+  scaleY = cv.height / H;
+  cssScale = cw / W;
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+resize();
+
+// ============================================================
+//  ユーティリティ
+// ============================================================
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+function angDiff(a, b) { let d = a - b; while (d > Math.PI) d -= TAU; while (d < -Math.PI) d += TAU; return d; }
+function circRect(cx, cy, r, x, y, w, h) {
+  const nx = clamp(cx, x, x + w), ny = clamp(cy, y, y + h);
+  const dx = cx - nx, dy = cy - ny;
+  return dx * dx + dy * dy <= r * r;
+}
+function rectRect(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+function compact(a) { let j = 0; for (let i = 0; i < a.length; i++) { const o = a[i]; if (!o.dead) a[j++] = o; } a.length = j; }
+function pad(n, len) { return String(Math.floor(n)).padStart(len, '0'); }
+
+// ============================================================
+//  入力（ゲームで使うキーはすべて preventDefault）
+// ============================================================
+const keys = {}, pressed = {};
+const GAME_CODES = new Set([
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX', 'KeyP', 'KeyR', 'KeyM',
+  'Space', 'Enter', 'NumpadEnter', 'Escape'
+]);
+window.addEventListener('keydown', e => {
+  initAudio();                   // ゲームで使わないキーでも音声の解放を試みる（パッドだけの環境向け）
+  if (!GAME_CODES.has(e.code)) return;
+  e.preventDefault();
+  touch.mode = false;            // キーボードを使い始めたらタッチ用ボタンは隠す（指で操作中は drawTouchUI 側で表示を保つ）
+  // キーリピートは新規押下にしない（自動ポーズで keys を消した後の押しっぱなしで解除されないように）
+  if (!keys[e.code] && !e.repeat) pressed[e.code] = true;
+  keys[e.code] = true;
+}, { passive: false });
+window.addEventListener('keyup', e => {
+  if (!GAME_CODES.has(e.code)) return;
+  e.preventDefault();
+  keys[e.code] = false;
+}, { passive: false });
+// クリック／タップでも AudioContext の再開を試みる
+for (const ev of ['pointerdown', 'mousedown', 'click']) window.addEventListener(ev, () => initAudio());
+// ポーズを切り替える入力（全入力元）。自動ポーズの瞬間に届いていたものはここで捨てる
+const PAUSE_TOGGLES = ['KeyP', 'Escape', 'GpStart', 'GpSelect', 'TouchPause'];
+function discardTouchMove() { touch.accX = touch.accY = touch.adjY = 0; }
+// 自動ポーズ（フォーカス喪失・パッド切断）の共通処理
+function autoPause() {
+  for (const k of PAUSE_TOGGLES) delete pressed[k];
+  discardTouchMove();
+  if (state === 'play') paused = true;
+}
+function releaseAll() {
+  for (const k in keys) keys[k] = false;
+  for (const k in pressed) delete pressed[k];   // 押下履歴も消す
+  touchReset();
+  gpRebase = true;
+  autoPause();
+}
+window.addEventListener('blur', releaseAll);
+// フォーカス復帰後の最初のサンプルをゲームパッドの基準にする（押しっぱなしのSTARTを新規押下と見なさない）
+window.addEventListener('focus', () => { gpRebase = true; });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    releaseAll();
+    // 裏に回ったら音も止める（BGMのスケジューラが間引かれて崩れないように）
+    if (AC && AC.state === 'running') { const r = AC.suspend(); if (r && r.catch) r.catch(() => {}); }
+  } else {
+    gpRebase = true;
+    if (AC && AC.state !== 'running' && AC.state !== 'closed') { const r = AC.resume(); if (r && r.catch) r.catch(() => {}); }
+  }
+});
+window.addEventListener('load', () => cv.focus());
+
+// ============================================================
+//  タッチ操作（スマートフォン）
+//  ・ボタン以外をドラッグ → 自機が指の移動量だけ相対移動。タッチ中は自動連射
+//  ・指が自機に重なる位置で触れたら、自機を指の少し上へ寄せて隠れないようにする
+//  ・右下：パワーアップ発動、右上：ポーズ（プレイ中、タッチ操作時のみ表示）
+//  レターボックスの黒帯も含め画面全体で受け付け、スクロール／ズームは止める。
+// ============================================================
+const isTouchDev = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const TOUCH_SENS = 1.0;            // 指の移動量 → 自機の移動量の倍率
+const TOUCH_MAX_STEP = 32;         // 1更新あたりの最大移動量（残りは次の更新へ繰り越し）
+const TOUCH_LIFT_CSS = 50;         // 自機を指より上へずらす量（画面上のCSSピクセル）
+const touch = { mode: false, dragId: null, lx: 0, ly: 0, accX: 0, accY: 0, adjY: 0 };
+function touchReset() { touch.dragId = null; touch.accX = touch.accY = touch.adjY = 0; }
+// タッチ用ボタンを出すか（キー／パッドに触れても、追跡中の指がある間は出し続ける）
+function touchUIOn() { return touch.mode || touch.dragId !== null; }
+function toGame(t) {
+  const r = cv.getBoundingClientRect();
+  return { x: (t.clientX - r.left) * W / (r.width || 1), y: (t.clientY - r.top) * H / (r.height || 1) };
+}
+// ボタン配置（ゲーム座標）。画面が小さいほどゲーム座標上は大きくして、指で押せる大きさを保つ
+function tbtnLayout() {
+  const k = 1 / (cssScale || 1);
+  const r = clamp(34 * k, 40, 84), s = clamp(44 * k, 44, 90);
+  return { pwr: { x: W - r - 16, y: H - r - 44, r }, pause: { x: W - s - 10, y: 8, s } };
+}
+function hitPause(p, L) { const b = L.pause, m = 12; return p.x >= b.x - m && p.x <= b.x + b.s + m && p.y >= b.y - m && p.y <= b.y + b.s + m; }
+function hitPower(p, L) { const b = L.pwr; return Math.hypot(p.x - b.x, p.y - b.y) <= b.r + 12; }
+function onTouchStart(e) {
+  e.preventDefault();
+  initAudio();
+  touch.mode = true;
+  // 取りこぼした touchend 対策：追跡中の指がもう画面に無ければ解放
+  if (touch.dragId !== null && !Array.prototype.some.call(e.touches, t => t.identifier === touch.dragId)) touch.dragId = null;
+  for (const t of e.changedTouches) {
+    const p = toGame(t);
+    if (state === 'play') {
+      const L = tbtnLayout();
+      if (hitPause(p, L)) { pressed.TouchPause = true; continue; }
+      if (!paused && hitPower(p, L)) { pressed.TouchPower = true; continue; }
+    } else {
+      pressed.TouchTap = true;     // タイトルでスタート／ゲームオーバー・クリア後に進む
+    }
+    if (touch.dragId === null) {
+      touch.dragId = t.identifier; touch.lx = p.x; touch.ly = p.y;
+      touch.accX = touch.accY = 0;
+      // 固定更新の間に収まる短いタップでも1発は撃てるよう押下を記録（ボタン領域は上で continue 済み）
+      if (state === 'play' && !paused) pressed.TouchShot = true;
+      // 指が自機の上か少し下に触れたら、自機を指の上 TOUCH_LIFT_CSS へ寄せる（数フレームかけて）
+      if (state === 'play' && !paused && P && P.alive) {
+        const lift = TOUCH_LIFT_CSS / (cssScale || 1);
+        if (Math.abs(p.x - P.x) < 60 && p.y > P.y - 30 && p.y < P.y + lift) touch.adjY = (p.y - lift) - P.y;
+        else touch.adjY = 0;
+      }
+    }
+  }
+}
+function onTouchMove(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier !== touch.dragId) continue;
+    const p = toGame(t);
+    if (state === 'play' && !paused) {
+      touch.accX += (p.x - touch.lx) * TOUCH_SENS;
+      touch.accY += (p.y - touch.ly) * TOUCH_SENS;
+    }
+    touch.lx = p.x; touch.ly = p.y;
+  }
+}
+function onTouchEnd(e) {
+  e.preventDefault();
+  initAudio();                     // iOS は touchend でのオーディオ解放が確実
+  for (const t of e.changedTouches) if (t.identifier === touch.dragId) touch.dragId = null;
+}
+function onTouchCancel(e) {
+  e.preventDefault();
+  // キャンセルされたドラッグの未消費の移動量・指よけ補正は捨てる（勝手に動き続けないように）
+  for (const t of e.changedTouches) if (t.identifier === touch.dragId) touchReset();
+}
+document.addEventListener('touchstart', onTouchStart, { passive: false });
+document.addEventListener('touchmove', onTouchMove, { passive: false });
+document.addEventListener('touchend', onTouchEnd, { passive: false });
+document.addEventListener('touchcancel', onTouchCancel, { passive: false });
+// iOS Safari のピンチ（gesture*）、長押しメニュー、ダブルタップズームを止める
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend', 'dblclick']) {
+  document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+}
+document.addEventListener('contextmenu', e => { if (touch.mode) e.preventDefault(); });
+
+// ============================================================
+//  ゲームパッド（Gamepad API・標準マッピング想定）
+//  rAFごとに1回ポーリングし、保持状態は gpad、押下エッジは pressed の Gp* に入れる。
+//  pressed は update() の最後に消えるので、更新0回のフレームでもエッジは次の更新まで残る。
+// ============================================================
+const GP_DEAD = 0.25;
+const GP_BTN = { A: 0, B: 1, X: 2, Y: 3, SELECT: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+const gpad = { ax: 0, ay: 0, up: false, down: false, left: false, right: false, shot: false };
+const gpPrev = new Map();          // gamepad.index -> 前回のボタン押下配列
+const gpInfo = { count: 0, name: '', standard: true };
+let gpNotice = null;               // 接続／切断の一時表示 { str, t }
+let gpRebase = false;              // true なら次のサンプルは基準取りだけ（押下エッジを出さない）
+const hasGamepadAPI = typeof navigator.getGamepads === 'function';
+function getPads() {
+  if (!hasGamepadAPI) return [];
+  let list;
+  try { list = navigator.getGamepads(); } catch (err) { return []; }
+  const out = [];
+  if (list) for (const g of list) if (g && g.connected !== false) out.push(g);
+  return out;
+}
+function btnDown(g, i) {
+  const b = g.buttons[i];
+  if (!b) return false;
+  return typeof b === 'object' ? (b.pressed || b.value > 0.5) : b > 0.5;
+}
+function shortPadName(id) {
+  const s = String(id || '').replace(/\s*\((?:STANDARD GAMEPAD\s*)?Vendor:.*$/i, '').replace(/\s+/g, ' ').trim();
+  return s.length > 28 ? s.slice(0, 27) + '…' : s;
+}
+function pollGamepads() {
+  gpad.ax = gpad.ay = 0;
+  gpad.up = gpad.down = gpad.left = gpad.right = gpad.shot = false;
+  const all = getPads();
+  // 標準マッピングのものを優先。無ければ非標準の先頭1台だけを使う（軸・ボタン配置が違う可能性あり）
+  const std = all.filter(g => g.mapping === 'standard');
+  const use = std.length ? std : all.slice(0, 1);
+  gpInfo.count = all.length;
+  gpInfo.standard = !all.length || std.length > 0;
+  gpInfo.name = use.length ? shortPadName(use[0].id) : '';
+  // フォーカス復帰直後などは、このサンプルを基準にし直すだけで押下エッジは出さない
+  const rebase = gpRebase;
+  gpRebase = false;
+  const seen = new Set();
+  for (const g of use) {
+    seen.add(g.index);
+    const prev = gpPrev.get(g.index) || [];
+    const now = [];
+    for (let i = 0; i < g.buttons.length; i++) now[i] = btnDown(g, i);
+    const edge = i => !rebase && now[i] && !prev[i];
+    let any = false;
+    for (let i = 0; i < now.length; i++) if (edge(i)) { any = true; break; }
+    if (any) { initAudio(); touch.mode = false; }
+    if (edge(GP_BTN.A) || edge(GP_BTN.X)) pressed.GpShot = true;
+    if (edge(GP_BTN.B) || edge(GP_BTN.Y)) pressed.GpPower = true;
+    if (edge(GP_BTN.START)) pressed.GpStart = true;
+    if (edge(GP_BTN.SELECT)) pressed.GpSelect = true;
+    if (now[GP_BTN.A] || now[GP_BTN.X]) gpad.shot = true;
+    if (now[GP_BTN.UP]) gpad.up = true;
+    if (now[GP_BTN.DOWN]) gpad.down = true;
+    if (now[GP_BTN.LEFT]) gpad.left = true;
+    if (now[GP_BTN.RIGHT]) gpad.right = true;
+    // 左スティック：円形デッドゾーン → 残りを0〜1に再スケール（倒し具合で速度が変わる）
+    const x = +g.axes[0] || 0, y = +g.axes[1] || 0, m = Math.hypot(x, y);
+    if (m > GP_DEAD) {
+      const k = Math.min(1, (m - GP_DEAD) / (1 - GP_DEAD)) / m;
+      if (Math.abs(x * k) > Math.abs(gpad.ax)) gpad.ax = x * k;
+      if (Math.abs(y * k) > Math.abs(gpad.ay)) gpad.ay = y * k;
+    }
+    gpPrev.set(g.index, now);
+  }
+  // 複数台の軸ごとの最大値を合成すると斜めで長さが1を超えるので、ベクトル長を1に制限
+  const am = Math.hypot(gpad.ax, gpad.ay);
+  if (am > 1) { gpad.ax /= am; gpad.ay /= am; }
+  for (const i of gpPrev.keys()) if (!seen.has(i)) gpPrev.delete(i);
+}
+if (hasGamepadAPI) {
+  window.addEventListener('gamepadconnected', e => {
+    gpNotice = { str: 'コントローラー接続：' + (shortPadName(e.gamepad && e.gamepad.id) || 'ゲームパッド'), t: 180 };
+  });
+  window.addEventListener('gamepaddisconnected', e => {
+    if (e.gamepad) gpPrev.delete(e.gamepad.index);
+    gpNotice = { str: 'コントローラーが切断されました', t: 180 };
+    // プレイ中に最後の1台が抜けたら自動ポーズ
+    if (state === 'play' && getPads().length === 0) autoPause();
+  });
+}
+
+// ============================================================
+//  効果音（WebAudioで合成。外部ファイルなし）
+// ============================================================
+let AC = null, master = null, muteBus = null, noiseBuf = null, muted = false;
+const sfxLast = {};
+let lastLaserSfx = -99;
+function initAudio() {
+  if (!AC) {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    try {
+      AC = new C();
+      // 効果音（master）とBGM（musicBus）は共通の消音用ノードを通す（予約済みの音も M で止まるように）
+      muteBus = AC.createGain(); muteBus.gain.value = muted ? 0 : 1; muteBus.connect(AC.destination);
+      master = AC.createGain(); master.gain.value = 0.35; master.connect(muteBus);
+      noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    } catch (err) { AC = null; return; }
+    try {
+      musicBus = AC.createGain(); musicBus.gain.value = MUSIC_VOL; musicBus.connect(muteBus);
+      music.waves = { lead: pulseWave(0.25), arp: pulseWave(0.125), bass: 'square' };
+    } catch (err) { musicBus = null; }
+  }
+  // iOS は 'interrupted' になることもあるので running 以外はすべて再開を試みる
+  if (AC.state !== 'running' && AC.state !== 'closed') { const r = AC.resume(); if (r && r.catch) r.catch(() => {}); }
+}
+function applyMute() {
+  if (!AC || !muteBus) return;
+  try {
+    const t = AC.currentTime, g = muteBus.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(muted ? 0 : 1, t + 0.02);
+  } catch (err) { /* 音量変更に失敗してもゲームは続行 */ }
+}
+function tone(type, f0, f1, dur, vol, delay = 0) {
+  const t = AC.currentTime + delay;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol, freq) {
+  const t = AC.currentTime;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(60, t + dur);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(master);
+  s.start(t); s.stop(t + Math.min(dur, 0.99));
+}
+function sfx(n) {
+  if (!AC || muted || AC.state !== 'running') return;
+  if (sfxLast[n] === frameCount) return;
+  sfxLast[n] = frameCount;
+  try {
+    switch (n) {
+      case 'shot': tone('square', 1100, 520, 0.05, 0.03); break;
+      case 'laser':
+        if (frameCount - lastLaserSfx < 8) return;
+        lastLaserSfx = frameCount; tone('sawtooth', 1700, 1000, 0.07, 0.022); break;
+      case 'hit': tone('square', 320, 200, 0.04, 0.03); break;
+      case 'tink': tone('triangle', 2100, 1500, 0.03, 0.02); break;
+      case 'pop': noise(0.25, 0.22, 2600); break;
+      case 'boom': noise(0.6, 0.4, 1800); tone('sine', 130, 40, 0.5, 0.25); break;
+      case 'death': noise(0.95, 0.5, 3000); tone('sawtooth', 420, 50, 0.8, 0.15); break;
+      case 'cap': tone('square', 660, 1320, 0.12, 0.05); break;
+      case 'power': tone('square', 523, 523, 0.07, 0.05); tone('square', 784, 784, 0.07, 0.05, 0.07); tone('square', 1046, 1046, 0.12, 0.05, 0.14); break;
+      case 'deny': tone('square', 170, 120, 0.1, 0.04); break;
+      case 'shield': tone('triangle', 900, 300, 0.1, 0.05); break;
+      case 'warn': tone('sawtooth', 440, 440, 0.35, 0.05); tone('sawtooth', 330, 330, 0.35, 0.05, 0.4); break;
+      case 'extend': tone('square', 880, 1760, 0.3, 0.05); break;
+      case 'eshot': tone('triangle', 520, 300, 0.06, 0.02); break;
+      case 'pause': tone('sine', 600, 600, 0.08, 0.05); break;
+      case 'fanfare':
+        tone('square', 523, 523, 0.11, 0.045); tone('square', 659, 659, 0.11, 0.045, 0.12);
+        tone('square', 784, 784, 0.11, 0.045, 0.24); tone('square', 1046, 1046, 0.5, 0.05, 0.36); break;
+    }
+  } catch (err) { /* 音が鳴らなくてもゲームは続行 */ }
+}
+
+// ============================================================
+//  BGM（WebAudioで合成するチップチューン風ループ。外部ファイルなし）
+//  16分音符単位のステップシーケンサ。AudioContext の時刻で少し先読みして予約する。
+//  ・通常曲 'main'（Aマイナー 150BPM・8小節：メロディ4小節＋アルペジオ4小節）
+//  ・ボス曲 'boss'（Dマイナー 162BPM・8小節：16分刻みのベースで緊張感）
+//  ・再生開始はスタート操作（newGame）以降。ゲームオーバー／クリア／ボス撃破演出で止め、
+//    リスタート・次の周回で頭から再開。ポーズ中は音量を絞る。M キーの消音で一緒に止まる。
+// ============================================================
+const MUSIC_VOL = 0.15;            // BGM全体の音量（効果音より控えめ）
+const MV = { lead: 0.04, arp: 0.026, bass: 0.04, kick: 0.2, snare: 0.06, hat: 0.022 };
+let musicBus = null, musicArmed = false, musicRestart = false;
+const music = { cur: null, node: null, echo: null, extra: null, step: 0, next: 0, duck: false, waves: null,
+                fading: [] };      // フェードアウト中の旧曲 { gain, nodes, timer }
+const ARP = [0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3];
+function pulseWave(duty) {
+  // デューティ比 duty の矩形波（ファミコン風のパルス波）をフーリエ級数で作る
+  try {
+    const n = 48, re = new Float32Array(n), im = new Float32Array(n);
+    for (let k = 1; k < n; k++) re[k] = 2 / (k * Math.PI) * Math.sin(k * Math.PI * duty);
+    return AC.createPeriodicWave(re, im);
+  } catch (err) { return 'square'; }
+}
+// chords: [ベースの根音, 和音構成音×3]（MIDI番号）。mel: [ステップ, 音, 長さ(16分)]
+function buildTrack(o) {
+  const len = o.bars * 16, lead = new Array(len);
+  for (const [s, m, l] of o.mel) lead[s] = [m, l, 'lead'];
+  for (let bar = o.melBars; bar < o.bars; bar++) {
+    const ch = o.chords[bar % o.chords.length], tones = [ch[1], ch[2], ch[3], ch[1] + 12];
+    for (let i = 0; i < 16; i++) lead[bar * 16 + i] = [tones[ARP[i]], 1, 'arp'];
+  }
+  return Object.assign({ len, lead }, o);
+}
+const TRACKS = {
+  main: buildTrack({
+    bpm: 150, bars: 8, melBars: 4, bassLen: 1.6,
+    chords: [[45, 69, 72, 76], [41, 69, 72, 77], [43, 67, 71, 74], [40, 68, 71, 76]],   // Am F G E
+    mel: [
+      [0, 69, 2], [2, 72, 2], [4, 76, 2], [6, 81, 4], [10, 79, 2], [12, 76, 4],
+      [16, 77, 3], [19, 76, 1], [20, 72, 2], [22, 69, 2], [24, 72, 2], [26, 77, 2], [28, 76, 4],
+      [32, 67, 2], [34, 71, 2], [36, 74, 2], [38, 79, 4], [42, 77, 2], [44, 74, 4],
+      [48, 76, 2], [50, 80, 2], [52, 83, 4], [56, 80, 2], [58, 76, 2], [60, 71, 2], [62, 68, 2]
+    ],
+    // 8分音符で根音とオクターブ上を交互に刻む
+    bass: (s, ch) => (s % 2) ? null : ch[0] + ((s % 4) ? 12 : 0),
+    drum: (s) => {
+      const b = s % 16;
+      if (s >= 112 && b >= 13) return 'snare';            // 8小節目の終わりにフィル
+      if (b === 0 || b === 6 || b === 8) return 'kick';
+      if (b === 4 || b === 12) return 'snare';
+      return (b % 2 === 0) ? 'hat' : null;
+    }
+  }),
+  boss: buildTrack({
+    bpm: 162, bars: 8, melBars: 4, bassLen: 0.8,
+    chords: [[38, 62, 65, 69], [38, 62, 65, 69], [34, 62, 65, 70], [33, 61, 64, 69]],   // Dm Dm B♭ A
+    mel: [
+      [0, 81, 3], [3, 82, 1], [4, 81, 2], [6, 77, 2], [8, 74, 4], [12, 76, 2], [14, 77, 2],
+      [16, 79, 3], [19, 77, 1], [20, 76, 2], [22, 73, 2], [24, 74, 6], [30, 69, 2],
+      [32, 77, 3], [35, 79, 1], [36, 77, 2], [38, 74, 2], [40, 70, 4], [44, 74, 2], [46, 77, 2],
+      [48, 76, 4], [52, 73, 4], [56, 69, 2], [58, 73, 2], [60, 76, 2], [62, 79, 2]
+    ],
+    // 16分で根音を刻み、ところどころオクターブ上へ跳ねる
+    bass: (s, ch) => ch[0] + [0, 0, 12, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 12, 0, 12][s % 16],
+    drum: (s) => {
+      const b = s % 16;
+      if ((s % 64) >= 48 && b >= 13) return 'snare';
+      if (b === 4 || b === 12) return 'snare';            // b%4===0 より先に判定（裏拍のスネアを消さない）
+      if (b % 4 === 0) return 'kick';
+      return (b % 2) ? 'hat' : null;
+    }
+  })
+};
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+function mOsc(dests, kind, midi, t, dur, vol) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  const w = music.waves && music.waves[kind];
+  if (w && typeof w !== 'string') o.setPeriodicWave(w); else o.type = w || 'square';
+  o.frequency.setValueAtTime(mtof(midi), t);
+  // アタック → 減衰 → ゆるい持続 → 短いリリース
+  const a = t + 0.005, d = t + Math.max(0.012, Math.min(dur * 0.5, 0.06)), r = t + Math.max(dur, d - t + 0.02);
+  const rel = Math.max(d + 0.005, r - 0.03);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, a);
+  g.gain.linearRampToValueAtTime(vol * 0.65, d);
+  g.gain.linearRampToValueAtTime(vol * 0.45, rel);
+  g.gain.exponentialRampToValueAtTime(0.0001, r);
+  o.connect(g);
+  for (const dst of dests) if (dst) g.connect(dst);
+  o.start(t); o.stop(r + 0.02);
+}
+function mNoise(dest, t, dur, vol, type, freq) {
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(dest);
+  s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+}
+function mKick(dest, t, vol) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  o.connect(g); g.connect(dest);
+  o.start(t); o.stop(t + 0.15);
+}
+function musicStop(fade) {
+  const m = music;
+  m.cur = null;
+  if (!m.node) return;
+  const f = { gain: m.node.gain, nodes: [m.node, m.echo].concat(m.extra || []), timer: 0 };
+  const t = AC.currentTime, gn = f.gain;
+  gn.cancelScheduledValues(t); gn.setValueAtTime(gn.value, t); gn.linearRampToValueAtTime(0, t + fade);
+  f.timer = setTimeout(() => musicDrop(f), (fade + 1) * 1000);
+  m.fading.push(f);
+  m.node = m.echo = m.extra = null;
+}
+function musicDrop(f) {
+  clearTimeout(f.timer);
+  for (const n of f.nodes) { try { n.disconnect(); } catch (err) { /* 既に切断済み */ } }
+  const i = music.fading.indexOf(f);
+  if (i >= 0) music.fading.splice(i, 1);
+}
+// 新曲の開始時、フェードアウト中の旧曲を短く絞って切る（ゲームオーバー直後のリスタートで重ならないように）
+function musicCutFades() {
+  const t = AC.currentTime;
+  for (const f of music.fading) {
+    try { const g = f.gain; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(0, t + 0.03); }
+    catch (err) { /* 失敗しても下の切断で止まる */ }
+    clearTimeout(f.timer);
+    f.timer = setTimeout(() => musicDrop(f), 120);
+  }
+}
+function musicStart(name) {
+  musicCutFades();
+  musicStop(0.06);
+  const T = TRACKS[name], sd = 60 / T.bpm / 4;
+  const node = AC.createGain(); node.gain.value = 1; node.connect(musicBus);
+  // メロディ用の簡易エコー（付点8分ディレイ）
+  const echo = AC.createDelay(1), fb = AC.createGain(), wet = AC.createGain();
+  echo.delayTime.value = sd * 3; fb.gain.value = 0.3; wet.gain.value = 0.35;
+  echo.connect(fb); fb.connect(echo); echo.connect(wet); wet.connect(node);
+  Object.assign(music, { cur: name, node, echo, extra: [fb, wet], step: 0, next: AC.currentTime + 0.06 });
+}
+function musicSchedule() {
+  const T = TRACKS[music.cur], sd = 60 / T.bpm / 4, now = AC.currentTime;
+  if (music.next < now - 0.05) music.next = now + 0.03;     // 大きく遅れたら（処理落ち等）今から刻み直す
+  while (music.next < now + 0.2) {
+    const s = music.step, t = music.next, out = music.node;
+    const ch = T.chords[((s / 16) | 0) % T.chords.length];
+    const bn = T.bass(s, ch);
+    if (bn != null) mOsc([out], 'bass', bn, t, sd * T.bassLen, MV.bass);
+    const ln = T.lead[s];
+    if (ln) mOsc(ln[2] === 'lead' ? [out, music.echo] : [out], ln[2], ln[0], t, sd * ln[1] * 0.92, MV[ln[2]]);
+    const dr = T.drum(s);
+    if (dr === 'kick') mKick(out, t, MV.kick);
+    else if (dr === 'snare') mNoise(out, t, 0.09, MV.snare, 'bandpass', 1900);
+    else if (dr === 'hat') mNoise(out, t, 0.03, MV.hat, 'highpass', 7000);
+    music.step = (s + 1) % T.len;
+    music.next += sd;
+  }
+}
+// 毎フレーム呼ぶ：ゲーム状態から流すべき曲を決めて切り替え、先読み予約する
+function musicUpdate() {
+  if (!AC || !musicBus || AC.state !== 'running') return;
+  let want = null;
+  if (musicArmed && !muted && state === 'play') want = boss ? (boss.state === 'dying' ? null : 'boss') : 'main';
+  if (musicRestart) { musicRestart = false; if (want) musicStart(want); }
+  if (want !== music.cur) {
+    if (want) musicStart(want);
+    else musicStop(muted ? 0.05 : 0.8);
+  }
+  const duck = state === 'play' && paused;
+  if (duck !== music.duck) {
+    music.duck = duck;
+    const t = AC.currentTime;
+    musicBus.gain.cancelScheduledValues(t);
+    musicBus.gain.setTargetAtTime(MUSIC_VOL * (duck ? 0.35 : 1), t, 0.08);
+  }
+  if (music.cur) musicSchedule();
+}
+
+// ============================================================
+//  背景（星空パララックス＋星雲）
+// ============================================================
+const starLayers = [
+  { n: 70, sp: 0.22, s: 1.0, a: 0.45, c: '#8fa8ff', pts: [] },
+  { n: 45, sp: 0.60, s: 1.5, a: 0.75, c: '#d2e2ff', pts: [] },
+  { n: 22, sp: 1.50, s: 2.2, a: 1.00, c: '#ffffff', pts: [] },
+];
+for (const L of starLayers) for (let i = 0; i < L.n; i++) L.pts.push({ x: rand(0, W), y: rand(0, H) });
+function updateStars() {
+  const m = (state === 'play' && G) ? 0.45 + 0.55 * (G.scrollSpeed / BASE_SCROLL) : 1;
+  for (const L of starLayers) for (const p of L.pts) {
+    p.x -= L.sp * m;
+    if (p.x < 0) { p.x += W; p.y = rand(0, H); }
+  }
+}
+const neb = document.createElement('canvas');
+neb.width = W / 2; neb.height = H / 2;
+(() => {
+  const nc = neb.getContext('2d');
+  if (!nc) return;   // 星雲は装飾なので、取得できなければ描かないだけにする
+  const blobs = [[110, 80, 140, '90,40,170', 0.30], [330, 190, 120, '20,90,180', 0.26],
+                 [230, 40, 90, '170,40,130', 0.16], [420, 120, 100, '40,150,170', 0.16]];
+  for (const [bx, by, br, rgb, a] of blobs) for (const off of [-W / 2, 0, W / 2]) {
+    const g = nc.createRadialGradient(bx + off, by, 0, bx + off, by, br);
+    g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(1, `rgba(${rgb},0)`);
+    nc.fillStyle = g; nc.fillRect(0, 0, W / 2, H / 2);
+  }
+})();
+let nebX = 0;
+const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+bgGrad.addColorStop(0, '#02030c'); bgGrad.addColorStop(0.5, '#090a24'); bgGrad.addColorStop(1, '#040410');
+const floorGrad = ctx.createLinearGradient(0, H - 180, 0, H);
+floorGrad.addColorStop(0, '#1f5c52'); floorGrad.addColorStop(1, '#061616');
+const ceilGrad = ctx.createLinearGradient(0, 0, 0, 180);
+ceilGrad.addColorStop(0, '#061616'); ceilGrad.addColorStop(1, '#1f5c52');
+
+// ============================================================
+//  地形（上下の起伏。ワールドX → 高さ）
+// ============================================================
+function band(x, a, b, f) { if (x <= a || x >= b) return 0; return Math.min(1, (x - a) / f, (b - x) / f); }
+function floorH(wx) {
+  if (wx < 1300 || wx > 8800) return 0;
+  const hills = band(wx, 1300, 3750, 300) * (52 + 38 * Math.sin(wx * 0.0052) + 22 * Math.sin(wx * 0.0131 + 1.3));
+  const flat  = band(wx, 3450, 5450, 220) * 70;
+  const cave  = band(wx, 5200, 8800, 320) * (88 + 55 * Math.sin(wx * 0.0047) + 24 * Math.sin(wx * 0.017 + 2.1));
+  return Math.max(hills, flat, cave, 0);
+}
+function ceilH(wx) {
+  if (wx < 1300 || wx > 8800) return 0;
+  const hills = band(wx, 1300, 3750, 300) * (18 + 14 * Math.sin(wx * 0.0071 + 0.4));
+  const flat  = band(wx, 3450, 5450, 220) * 26;
+  const cave  = band(wx, 5200, 8800, 320) * (88 + 55 * Math.sin(wx * 0.0047 + 2.6) + 24 * Math.sin(wx * 0.0133 + 0.7));
+  return Math.max(hills, flat, cave, 0);
+}
+const groundY = sx => H - floorH(sx + G.scrollX);
+const ceilY = sx => ceilH(sx + G.scrollX);
+const gapMid = sx => (ceilY(sx) + groundY(sx)) / 2;
+
+// ============================================================
+//  ゲーム状態
+// ============================================================
+let state = 'title';      // title / play / gameover / clear
+let paused = false;
+let frameCount = 0, stateT = 0, titleT = 0;
+let hiScore = 0;
+try { hiScore = +localStorage.getItem('azureVector.hi') || 0; } catch (err) { hiScore = 0; }
+function saveHi() {
+  if (G && G.score > hiScore) hiScore = G.score;
+  try { localStorage.setItem('azureVector.hi', String(hiScore)); } catch (err) { /* file:// 等で不可でも無視 */ }
+}
+
+let G = null, P = null;
+const enemies = [], ebul = [], pbul = [], caps = [], parts = [], rings = [], texts = [];
+let groups = {}, groupSeq = 0;
+let fort = null, boss = null, banner = null, shake = 0;
+
+function makeDiff(L) {
+  return {
+    bs: Math.min(1 + 0.22 * (L - 1), 2),        // 敵弾速度
+    fr: Math.min(1 + 0.4 * (L - 1), 2.6),       // 発射頻度
+    hp: 1 + 0.35 * (L - 1),                     // 耐久
+    revenge: L >= 2 ? Math.min(0.3 * (L - 1), 0.75) : 0   // 撃ち返し確率
+  };
+}
+const D = () => G.d;
+
+function makePlayer() {
+  const p = { x: 110, y: H / 2, px: 110, py: H / 2, alive: true, inv: 120, respawnT: 0, speedLv: 0, missile: false, double: false,
+              laser: false, options: 0, shield: 0, shieldFlash: 0, gauge: -1, shotCd: 0, missileCd: 0, trail: [], tilt: 0 };
+  resetTrail(p);
+  return p;
+}
+function resetTrail(p) { p.trail.length = 0; for (let i = 0; i < OPT_GAP * 2 + 2; i++) p.trail.push({ x: p.x, y: p.y }); }
+
+function newGame() {
+  G = { score: 0, lives: 3, loop: 1, nextExtend: 30000, scrollX: 0, scrollSpeed: BASE_SCROLL,
+        events: [], evIdx: 0, t: 0, d: makeDiff(1), bonus: 0 };
+  P = makePlayer();
+  parts.length = 0; rings.length = 0; texts.length = 0;
+  startLoop();
+  state = 'play'; paused = false;
+  // BGM はスタート操作以降に解禁し、リスタートのたびに頭から流す
+  musicArmed = true; musicRestart = true;
+  touch.accX = touch.accY = touch.adjY = 0;
+}
+function startLoop() {
+  G.scrollX = 0; G.scrollSpeed = BASE_SCROLL; G.events = buildStage(); G.evIdx = 0; G.t = 0; G.d = makeDiff(G.loop);
+  enemies.length = 0; ebul.length = 0; pbul.length = 0; caps.length = 0;
+  groups = {}; fort = null; boss = null;
+  P.alive = true; P.respawnT = 0;
+  P.x = 110; P.y = H / 2; P.inv = Math.max(P.inv, 120);
+  resetTrail(P);
+  banner = { text: `第${G.loop}周 出撃`, sub: G.loop > 1 ? '敵の攻撃が激しくなった！' : '', t: 160 };
+}
+function nextLoop() { G.loop++; startLoop(); state = 'play'; musicRestart = true; touch.accX = touch.accY = touch.adjY = 0; }
+function toGameOver() { state = 'gameover'; stateT = 0; saveHi(); }
+function toClear() {
+  // 最後の自機と相打ちでもボス撃破が先ならクリア優先（updatePlayer がゲームオーバーを保留している）
+  G.bonus = Math.max(0, G.lives) * 3000 * G.loop;
+  addScore(G.bonus);
+  if (G.lives <= 0) G.lives = 1;   // 失った機体を補充し、次の周回は最後の1機から始める
+  state = 'clear'; stateT = 0; saveHi();
+  sfx('fanfare');
+}
+function addScore(n) {
+  G.score += n;
+  while (G.score >= G.nextExtend) {
+    G.lives++; G.nextExtend += 50000;
+    if (P.alive) addText(P.x, P.y - 24, '1UP！', '#7fffa0');
+    sfx('extend');
+  }
+}
+function addText(x, y, str, color) { texts.push({ x, y, str, color, t: 60, dead: false }); }
+
+// ============================================================
+//  ステージ構成（スクロール位置で出現）
+// ============================================================
+function buildStage() {
+  const ev = [];
+  const A = (at, type, o) => ev.push(Object.assign({ at, type }, o || {}));
+  // 区間A：開けた宇宙空間
+  A(80, 'wave', { y: 150, amp: 55 });
+  A(300, 'wave', { y: 390, amp: 55 });
+  A(520, 'straight', { ys: [110, 200, 290], red: 1 });
+  A(700, 'wave', { y: 270, amp: 130 });
+  A(860, 'aimer', { y: 150 });
+  A(960, 'wave', { y: 400, amp: 40 });
+  A(1100, 'straight', { ys: [330, 420] });
+  A(1180, 'aimer', { y: 420 });
+  // 区間B：起伏のある丘陵
+  let i = 0;
+  for (let at = 1300; at <= 2900; at += 200, i++) {
+    switch (i % 4) {
+      case 0: A(at, 'turret', { side: 'floor' }); A(at + 60, 'wave', { y: 180, amp: 60 }); break;
+      case 1: A(at, 'turret', { side: 'floor' }); A(at + 40, 'straight', { ys: [150, 250], red: 1 }); break;
+      case 2: A(at, 'turret', { side: 'ceil' }); A(at + 80, 'aimer', { y: 200 }); break;
+      case 3: A(at, 'turret', { side: 'floor' }); A(at + 50, 'wave', { y: 260, amp: 90 }); break;
+    }
+  }
+  A(3050, 'wave', { y: 150, amp: 50 });
+  A(3150, 'straight', { ys: [100, 180, 260, 340] });
+  A(3250, 'aimer', { y: 300 });
+  // 中盤：地上要塞
+  A(FORT_WX - W - 20, 'fortress');
+  A(3420, 'wave', { y: 140, amp: 40 });
+  // 区間D：洞窟（天井・地面の砲台）
+  i = 0;
+  for (let at = 4250; at <= 7700; at += 180, i++) {
+    switch (i % 5) {
+      case 0: A(at, 'turret', { side: 'floor' }); A(at + 20, 'turret', { side: 'ceil' }); break;
+      case 1: A(at, 'wave', { y: 'mid', amp: 50 }); break;
+      case 2: A(at, 'turret', { side: 'floor' }); A(at + 60, 'aimer', { y: 'mid' }); break;
+      case 3: A(at, 'turret', { side: 'ceil' }); A(at + 40, 'straight', { ys: ['mid'], red: 1 }); break;
+      case 4: A(at, 'wave', { y: 'mid', amp: 40 }); A(at + 90, 'turret', { side: 'floor' }); break;
+    }
+  }
+  A(7900, 'wave', { y: 180, amp: 60 });
+  A(8100, 'wave', { y: 360, amp: 60 });
+  A(8300, 'straight', { ys: [150, 270, 390], red: 1 });
+  // 最後：大型戦艦
+  A(BOSS_AT, 'boss');
+  ev.sort((a, b) => a.at - b.at);
+  return ev;
+}
+
+function makeStraight(x, y, follow, red) {
+  return { type: 'straight', x, y, follow, vx: -(3.8 + 0.3 * (G.loop - 1)), hp: 1, r: 11, score: 120,
+           red: !!red, capsule: !!red, t: 0, flash: 0, cx: x, cy: y, dead: false };
+}
+function makeTurret(side, x, mount) {
+  return { type: 'turret', side, x, y: 0, cx: x, cy: 0, hp: Math.round(2 * D().hp), r: 12, score: 200,
+           ang: side === 'floor' ? -Math.PI / 2 : Math.PI / 2, fireT: Math.round(rand(40, 120)),
+           flash: 0, mount: mount || null, t: 0, dead: false };
+}
+function spawnEvent(e) {
+  const d = D();
+  switch (e.type) {
+    case 'wave': {
+      const id = ++groupSeq;
+      groups[id] = { n: 5, killed: 0 };
+      const follow = e.y === 'mid';
+      for (let k = 0; k < 5; k++) {
+        enemies.push({ type: 'wave', x: W + 30 + k * 44, y: -100, baseY: follow ? 0 : e.y, follow, amp: e.amp,
+                       vx: -2.7 - 0.15 * (G.loop - 1), hp: 1, r: 12, score: 100, group: id, t: k * 7, flash: 0,
+                       cx: 0, cy: 0, dead: false });
+      }
+      break;
+    }
+    case 'straight':
+      e.ys.forEach((yy, k) => {
+        const follow = yy === 'mid', x = W + 30 + k * 36;
+        enemies.push(makeStraight(x, follow ? gapMid(x) : yy, follow, e.red && k === 0));
+      });
+      break;
+    case 'aimer': {
+      const follow = e.y === 'mid', x = W + 40;
+      enemies.push({ type: 'aimer', x, y: follow ? gapMid(x) : e.y, phase: 'in', targetX: rand(640, 800),
+                     hp: Math.round(3 * d.hp), r: 15, score: 300, t: 0, fireT: 50, flash: 0, cx: x, cy: 0, dead: false });
+      break;
+    }
+    case 'turret': {
+      const x = W + 30, wx = x + G.scrollX;
+      if (e.side === 'floor' ? floorH(wx) < 12 : ceilH(wx) < 12) break;   // 地形がない所には置かない
+      enemies.push(makeTurret(e.side, x, null));
+      break;
+    }
+    case 'fortress': spawnFort(); break;
+    case 'boss': spawnBoss(); break;
+  }
+}
+
+// ============================================================
+//  弾・エフェクト
+// ============================================================
+function eShot(x, y, ang, spd) {
+  if (ebul.length > 360) return;
+  ebul.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, r: 4, dead: false });
+}
+function aimShot(x, y, spd, off = 0) {
+  const a = Math.atan2(P.y - y, P.x - x) + off;
+  eShot(x, y, a, spd * D().bs);
+}
+const EXP_COLORS = ['#fff6c8', '#ffd166', '#ff9f43', '#ff6b3d', '#ffffff'];
+function explode(x, y, size) {
+  const n = size >= 4 ? 70 : size >= 3 ? 42 : size === 2 ? 26 : 14;
+  const k = Math.sqrt(size);
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * TAU, sp = rand(0.4, 3.6) * k;
+    const life = rand(18, 38) * (size > 1 ? 1.3 : 1);
+    parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life, max: life,
+                 c: EXP_COLORS[(Math.random() * EXP_COLORS.length) | 0], s: rand(1.5, 3.5) * (size > 2 ? 1.4 : 1), dead: false });
+  }
+  rings.push({ x, y, r: 4, vr: 2.2 * k, life: 18, max: 18, dead: false });
+  if (parts.length > 800) parts.splice(0, parts.length - 800);
+  sfx(size >= 2 ? 'boom' : 'pop');
+  if (size >= 3) shake = Math.max(shake, 6 * k);
+}
+function spark(x, y, c) {
+  for (let i = 0; i < 4; i++) {
+    const a = Math.random() * TAU, sp = rand(0.8, 2.4);
+    parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 10, max: 10, c: c || '#bfefff', s: 1.6, dead: false });
+  }
+}
+function dropCap(x, y, death) { caps.push({ x, y, t: 0, death: !!death, dead: false }); }
+
+// ============================================================
+//  自機
+// ============================================================
+const TERRAIN_PTS = [[16, 0], [-12, -7], [-12, 7], [0, -5], [0, 5]];
+function optPos(i) { return P.trail[Math.min(P.trail.length - 1, (i + 1) * OPT_GAP)]; }
+function canActivate(i) {
+  switch (i) {
+    case 0: return P.speedLv < 3;
+    case 1: return !P.missile;
+    case 2: return !P.double;
+    case 3: return !P.laser;
+    case 4: return P.options < 2;
+    case 5: return P.shield <= 0;
+  }
+  return false;
+}
+function activatePower() {
+  if (P.gauge < 0 || !canActivate(P.gauge)) { sfx('deny'); return; }
+  switch (P.gauge) {
+    case 0: P.speedLv++; break;
+    case 1: P.missile = true; break;
+    case 2: P.double = true; P.laser = false; break;   // ダブルとレーザーは排他
+    case 3: P.laser = true; P.double = false; break;
+    case 4: P.options++; break;
+    case 5: P.shield = SHIELD_HP; break;
+  }
+  addText(P.x, P.y - 26, PW_NAMES[P.gauge], '#ffd27a');
+  P.gauge = -1;
+  sfx('power');
+}
+function touchesTerrain(cx, cy) {
+  for (const [px, py] of TERRAIN_PTS) {
+    const x = cx + px, y = cy + py;
+    if (y > groundY(x) || y < ceilY(x)) return true;
+  }
+  return false;
+}
+// 地形・要塞・ボス本体のどれかに接触する位置か（無敵中の移動制限に使う）
+function blockedAt(x, y) {
+  if (touchesTerrain(x, y)) return true;
+  if (fort && fort.state === 'alive' && structHitsPlayer(fort, x, y)) return true;
+  if (boss && (boss.state === 'enter' || boss.state === 'fight') && structHitsPlayer(boss, x, y)) return true;
+  return false;
+}
+function updatePlayer() {
+  P.px = P.x; P.py = P.y;          // この更新の移動前の位置（敵弾の区間判定に使う）
+  if (!P.alive) {
+    if (P.respawnT > 0) P.respawnT--;
+    if (P.respawnT <= 0) {
+      if (G.lives > 0) respawn();
+      // ボス撃破演出中ならゲームオーバーを保留し、toClear() でクリアを優先する
+      else if (!(boss && boss.state === 'dying')) toGameOver();
+    }
+    touch.accX = touch.accY = touch.adjY = 0;   // やられている間のドラッグは復帰後に持ち越さない
+    return;
+  }
+  const spd = 2.4 + P.speedLv * 0.95;
+  let dx = 0, dy = 0;
+  if (keys.ArrowLeft || keys.KeyA || gpad.left) dx -= 1;
+  if (keys.ArrowRight || keys.KeyD || gpad.right) dx += 1;
+  if (keys.ArrowUp || keys.KeyW || gpad.up) dy -= 1;
+  if (keys.ArrowDown || keys.KeyS || gpad.down) dy += 1;
+  if (dx && dy) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2; }
+  // キー／十字キーの入力が無いときは左スティックのアナログ値（大きさ0〜1）で移動
+  if (!dx && !dy) { dx = gpad.ax; dy = gpad.ay; }
+  // タッチ：たまったドラッグ量を相対移動として加える（1更新の上限つき、残りは繰り越し）
+  let tdx = 0, tdy = 0;
+  if (touch.accX || touch.accY) {
+    const m = Math.hypot(touch.accX, touch.accY), k = m > TOUCH_MAX_STEP ? TOUCH_MAX_STEP / m : 1;
+    tdx = touch.accX * k; tdy = touch.accY * k;
+    touch.accX -= tdx; touch.accY -= tdy;
+  }
+  if (touch.adjY) {
+    // 指で隠れないよう自機を指の上へ寄せる。地形・要塞・ボス本体に当たる位置なら寄せるのをやめる
+    const a = Math.abs(touch.adjY) < 1.5 ? touch.adjY : touch.adjY * 0.3;
+    touch.adjY -= a;
+    if (blockedAt(clamp(P.x + tdx, 24, W - 40), clamp(P.y + tdy + a, 44, H - 44))) touch.adjY = 0;
+    else tdy += a;
+  }
+  const ox = P.x, oy = P.y;
+  let nx = clamp(P.x + dx * spd + tdx, 24, W - 40);
+  let ny = clamp(P.y + dy * spd + tdy, 44, H - 44);
+  // 点滅無敵中は接触死しない代わりに、地形・構造物の中へは入り込めないようにする
+  if (P.inv > 0 && (nx !== ox || ny !== oy) && blockedAt(nx, ny) && !blockedAt(ox, oy)) {
+    if (!blockedAt(nx, oy)) ny = oy;
+    else if (!blockedAt(ox, ny)) nx = ox;
+    else { nx = ox; ny = oy; }
+  }
+  P.x = nx; P.y = ny;
+  P.tilt += (clamp(dy + tdy / 5, -1, 1) - P.tilt) * 0.2;
+  if (P.x !== ox || P.y !== oy) { P.trail.unshift({ x: P.x, y: P.y }); P.trail.pop(); }
+  if (P.inv > 0) P.inv--;
+  if (P.shieldFlash > 0) P.shieldFlash--;
+  if (pressed.KeyX || pressed.GpPower || pressed.TouchPower) activatePower();
+  P.shotCd--; P.missileCd--;
+  // 固定更新の間に押して離した短押しも拾う（コントローラーは GpShot、短いタップは TouchShot）。タッチ中は自動連射
+  if (keys.KeyZ || keys.Space || gpad.shot || pressed.KeyZ || pressed.Space || pressed.GpShot || pressed.TouchShot ||
+      touch.dragId !== null) fireWeapons();
+  // 地形接触はミス（点滅無敵中は除く）
+  if (touchesTerrain(P.x, P.y)) { killPlayer(); return; }
+}
+function countOf(kind, src) { let c = 0; for (const b of pbul) if (!b.dead && b.kind === kind && b.src === src) c++; return c; }
+function fireWeapons() {
+  const srcs = [[P.x + 18, P.y]];
+  for (let i = 0; i < P.options; i++) { const o = optPos(i); srcs.push([o.x + 8, o.y]); }
+  if (P.laser) {
+    if (P.shotCd <= 0) {
+      P.shotCd = 4;
+      // 4フレーム毎×17px=68px間隔なので長さ70pxで途切れない一本のビームに見える
+      srcs.forEach((s, i) => pbul.push({ kind: 'laser', x: s[0] + 70, y: s[1], vx: 17, vy: 0, len: 70, src: i, hit: new Set(), dmg: 1, dead: false }));
+      sfx('laser');
+    }
+  } else if (P.shotCd <= 0) {
+    let fired = false;
+    srcs.forEach((s, i) => {
+      if (countOf('shot', i) < 3) { pbul.push({ kind: 'shot', x: s[0], y: s[1], vx: 13, vy: 0, src: i, dmg: 1, dead: false }); fired = true; }
+      if (P.double && countOf('dbl', i) < 2) { pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false }); fired = true; }
+    });
+    if (fired) { P.shotCd = 6; sfx('shot'); }
+  }
+  if (P.missile && P.missileCd <= 0) {
+    let f = false;
+    srcs.forEach((s, i) => {
+      if (countOf('missile', i) < 1) { pbul.push({ kind: 'missile', x: s[0] - 8, y: s[1] + 6, vx: 2.2, vy: 3.6, src: i, dmg: 2, crawl: false, dead: false }); f = true; }
+    });
+    if (f) P.missileCd = 24;
+  }
+}
+// 点滅無敵中は、敵・弾・地形・構造物のどの接触でもミスにならない
+function killPlayer() {
+  if (!P.alive || P.inv > 0) return;
+  P.alive = false; P.respawnT = 110;
+  explode(P.x, P.y, 3); sfx('death'); shake = 10;
+  // パワーアップはリセット。カプセルを1つ出す（死亡中は流さない。左端すぎると復帰後に回収できないので x>=150）
+  const cx = Math.max(P.x, 150);
+  dropCap(cx, clamp(P.y, ceilY(cx) + 16, groundY(cx) - 16), true);
+  P.speedLv = 0; P.missile = false; P.double = false; P.laser = false; P.options = 0; P.shield = 0; P.gauge = -1;
+  G.lives--;
+}
+function respawn() {
+  P.alive = true; P.x = 90; P.y = clamp(gapMid(90), 70, H - 70); P.px = P.x; P.py = P.y;
+  P.inv = 150; P.shotCd = 0; P.tilt = 0;
+  touch.accX = touch.accY = touch.adjY = 0;
+  resetTrail(P);
+  ebul.length = 0;
+}
+
+// ============================================================
+//  自機の弾
+// ============================================================
+function updatePBullets() {
+  for (const b of pbul) {
+    if (b.dead) continue;
+    if (b.kind === 'missile') {
+      if (!b.crawl) {
+        b.x += b.vx; b.y += b.vy;
+        const gy = groundY(b.x);
+        if (gy < H - 1 && b.y >= gy - 3) {
+          if (gy < b.y - 12) { b.dead = true; spark(b.x, b.y, '#ffb040'); continue; }
+          b.crawl = true; b.y = gy - 3;
+        }
+      } else {
+        const nx = b.x + 3.6, gy = groundY(nx);
+        if (gy >= H - 1) { b.crawl = false; b.vx = 2.2; b.vy = 3.6; b.x = nx; }
+        else if (gy < b.y - 10) { b.dead = true; spark(b.x + 4, b.y, '#ffb040'); continue; }   // 壁に衝突
+        else { b.x = nx; b.y = gy - 3; }
+      }
+      if (b.y < ceilY(b.x)) { b.dead = true; continue; }
+    } else {
+      b.x += b.vx; b.y += b.vy;
+    }
+    if (b.x > W + (b.len || 0) + 10 || b.x < -20 || b.y < -20 || b.y > H + 20) { b.dead = true; continue; }
+    if (b.kind !== 'missile' && (b.y > groundY(b.x) || b.y < ceilY(b.x))) { b.dead = true; spark(b.x, b.y); continue; }
+    hitEnemies(b);
+    if (b.dead) continue;
+    if (fort && fort.state === 'alive' && hitStruct(fort, b)) { b.dead = true; continue; }
+    if (boss && (boss.state === 'fight' || boss.state === 'enter') && boss.x < W + 120 && hitStruct(boss, b)) { b.dead = true; continue; }
+  }
+  compact(pbul);
+}
+function hitEnemies(b) {
+  const isL = b.kind === 'laser', br = b.kind === 'missile' ? 6 : 5;
+  for (const e of enemies) {
+    if (e.dead) continue;
+    if (isL) {
+      if (b.hit.has(e)) continue;
+      if (circRect(e.cx, e.cy, e.r, b.x - b.len, b.y - 6, b.len, 12)) { b.hit.add(e); damageEnemy(e, b.dmg); }
+    } else {
+      const dx = e.cx - b.x, dy = e.cy - b.y, rr = e.r + br;
+      if (dx * dx + dy * dy < rr * rr) { damageEnemy(e, b.dmg); b.dead = true; return; }
+    }
+  }
+}
+function damageEnemy(e, dmg) {
+  if (e.dead) return;
+  e.hp -= dmg; e.flash = 3;
+  if (e.hp <= 0) killEnemy(e); else sfx('hit');
+}
+function killEnemy(e) {
+  e.dead = true;
+  addScore(e.score);
+  explode(e.cx, e.cy, e.type === 'aimer' ? 2 : 1);
+  if (e.capsule) dropCap(e.cx, e.cy);
+  if (e.group) {
+    const g = groups[e.group];
+    if (g && ++g.killed === g.n) { dropCap(e.cx, e.cy); addText(e.cx, e.cy - 18, '編隊全滅', '#ffcf6a'); }
+  }
+  // 2周目以降は撃ち返し弾
+  const d = D();
+  if (d.revenge > 0 && P.alive && Math.random() < d.revenge && Math.hypot(P.x - e.cx, P.y - e.cy) > 110) aimShot(e.cx, e.cy, 3);
+}
+
+// ============================================================
+//  敵
+// ============================================================
+function updateEnemies() {
+  const d = D(), sp = G.scrollSpeed;
+  for (const e of enemies) {
+    if (e.dead) continue;
+    e.t++;
+    if (e.flash > 0) e.flash--;
+    switch (e.type) {
+      case 'wave':
+        e.x += e.vx;
+        e.y = (e.follow ? gapMid(e.x) : e.baseY) + e.amp * Math.sin(e.x * 0.012);
+        e.cx = e.x; e.cy = e.y;
+        break;
+      case 'straight':
+        e.x += e.vx;
+        if (e.follow) e.y += (gapMid(e.x) - e.y) * 0.1;
+        e.cx = e.x; e.cy = e.y;
+        break;
+      case 'aimer':
+        if (e.phase === 'in') {
+          e.x += (e.targetX - e.x) * 0.045 - 0.4;
+          if (e.x <= e.targetX + 2) { e.phase = 'hold'; e.t = 0; }
+        } else if (e.phase === 'hold') {
+          if (P.alive) e.y += clamp(P.y - e.y, -1.1, 1.1);
+          if (--e.fireT <= 0) { e.fireT = Math.round(rand(70, 100) / d.fr); if (P.alive) { aimShot(e.x - 14, e.y, 3.2); sfx('eshot'); } }
+          if (e.t > 320) e.phase = 'out';
+        } else {
+          e.x += 3.2;
+          if (e.x > W + 60) e.dead = true;
+        }
+        e.y = clamp(e.y, ceilY(e.x) + 28, groundY(e.x) - 28);
+        e.cx = e.x; e.cy = e.y;
+        break;
+      case 'turret': {
+        if (e.mount) { e.x = e.mount.obj.x + e.mount.dx; e.y = e.mount.obj.gy + e.mount.dy; }
+        else { e.x -= sp; e.y = e.side === 'floor' ? groundY(e.x) : ceilY(e.x); }
+        const s = e.side === 'floor' ? -1 : 1;
+        e.cx = e.x; e.cy = e.y + s * 8;
+        const bx = e.cx, by = e.cy;
+        const inSight = e.side === 'floor' ? P.y < by - 4 : P.y > by + 4;
+        if (P.alive) {
+          let a = Math.atan2(P.y - by, P.x - bx);
+          if (e.side === 'floor') { if (a > 0) a = a < Math.PI / 2 ? -0.05 : -Math.PI + 0.05; }
+          else { if (a < 0) a = a > -Math.PI / 2 ? 0.05 : Math.PI - 0.05; }
+          e.ang += angDiff(a, e.ang) * 0.12;
+        }
+        if (--e.fireT <= 0) {
+          e.fireT = Math.round(rand(100, 160) / d.fr);
+          if (P.alive && inSight && e.x > 30 && e.x < W - 20 && Math.hypot(P.x - bx, P.y - by) > 90) {
+            eShot(bx + Math.cos(e.ang) * 14, by + Math.sin(e.ang) * 14, e.ang, 3 * d.bs);
+            sfx('eshot');
+          }
+        }
+        break;
+      }
+    }
+    if (e.x < -60) e.dead = true;
+    // 体当たり
+    if (!e.dead && P.alive && P.inv <= 0) {
+      const dx = e.cx - P.x, dy = e.cy - P.y, rr = e.r + 6;
+      if (dx * dx + dy * dy < rr * rr) { killPlayer(); damageEnemy(e, 3); }
+    }
+  }
+  compact(enemies);
+}
+
+// ============================================================
+//  構造物（要塞・ボス）共通：防壁プレート → コア → 装甲
+// ============================================================
+function hitStruct(s, b) {
+  let x0, y0, w, h;
+  if (b.kind === 'laser') { x0 = b.x - b.len; y0 = b.y - 5; w = b.len; h = 10; }
+  else { x0 = b.x - 5; y0 = b.y - 4; w = 10; h = 8; }
+  const ox = s.x, oy = s.oy;
+  for (const p of s.plates) {
+    if (p.hp <= 0) continue;
+    if (rectRect(x0, y0, w, h, ox + p.dx, oy + s.plateY, s.plateW, s.plateH)) {
+      p.hp -= b.dmg; p.flash = 3;
+      if (p.hp <= 0) { explode(ox + p.dx + 4, oy + s.plateY + s.plateH / 2, 1); addScore(200); }
+      else sfx('tink');
+      return true;
+    }
+  }
+  const c = s.core;
+  if (c.hp > 0 && circRect(ox + c.dx, oy + c.dy, c.r, x0, y0, w, h)) {
+    c.hp -= b.dmg; c.flash = 3; sfx('hit');
+    if (c.hp <= 0) s.onDestroy();
+    return true;
+  }
+  for (const r of s.body) {
+    if (rectRect(x0, y0, w, h, ox + r[0], oy + r[1], r[2], r[3])) { spark(b.x, b.y); sfx('tink'); return true; }
+  }
+  return false;
+}
+function structHitsPlayer(s, x = P.x, y = P.y) {
+  const px = x - 12, py = y - 6, pw = 28, ph = 12;
+  for (const r of s.body) if (rectRect(px, py, pw, ph, s.x + r[0], s.oy + r[1], r[2], r[3])) return true;
+  for (const p of s.plates) if (p.hp > 0 && rectRect(px, py, pw, ph, s.x + p.dx, s.oy + s.plateY, s.plateW, s.plateH)) return true;
+  const c = s.core;
+  return c.hp > 0 && circRect(s.x + c.dx, s.oy + c.dy, c.r, px, py, pw, ph);
+}
+
+// ---------- 地上要塞 ----------
+function spawnFort() {
+  const d = D(), gy = H - floorH(FORT_WX + 150);
+  fort = {
+    wx: FORT_WX, x: FORT_WX - G.scrollX, gy, oy: gy, state: 'alive', lock: 0, released: false, dieT: 0,
+    spawnT: 90, spawnN: 0, fireT: 100,
+    body: [[0, -45, 70, 45], [0, -150, 70, 45], [70, -150, 230, 150], [110, -210, 140, 60]],
+    plates: [{ dx: 8, hp: 0, flash: 0 }, { dx: 26, hp: 0, flash: 0 }, { dx: 44, hp: 0, flash: 0 }],
+    plateY: -105, plateW: 9, plateH: 60,
+    core: { dx: 64, dy: -75, r: 15, hp: Math.round(24 * d.hp), max: 0, flash: 0 },
+    onDestroy: destroyFort
+  };
+  fort.plates.forEach(p => { p.hp = Math.round(4 * d.hp); });
+  fort.core.max = fort.core.hp;
+  for (const [dx, dy] of [[140, -210], [220, -210], [290, -150]]) enemies.push(makeTurret('floor', 0, { obj: fort, dx, dy }));
+  banner = { text: '要塞接近', sub: '防壁を破り、奥のコアを撃て', t: 170, warn: true };
+  sfx('warn');
+}
+function updateFort() {
+  const f = fort, d = D();
+  f.x = f.wx - G.scrollX;
+  if (f.core.flash > 0) f.core.flash--;
+  for (const p of f.plates) if (p.flash > 0) p.flash--;
+  if (f.state === 'alive') {
+    if (f.x <= 600 && !f.released) {
+      // スクロール停止中：上空から増援
+      if (++f.lock > 1800) { f.released = true; banner = { text: '要塞を通過', sub: '', t: 90 }; }
+      if (--f.spawnT <= 0) {
+        f.spawnT = Math.round(120 / d.fr); f.spawnN++;
+        if (f.spawnN % 4 === 0) spawnEvent({ type: 'wave', y: 140, amp: 45 });
+        else enemies.push(makeStraight(W + 30, rand(70, 220), false, false));
+      }
+    }
+    if (f.x < W - 30 && --f.fireT <= 0) {
+      f.fireT = Math.round(110 / d.fr);
+      for (let k = -1; k <= 1; k++) eShot(f.x - 6, f.gy - 75, Math.PI + k * 0.3, 2.8 * d.bs);
+      sfx('eshot');
+    }
+    if (P.alive && structHitsPlayer(f)) killPlayer();
+  } else if (f.state === 'dying') {
+    if (--f.dieT % 6 === 0) explode(f.x + rand(0, 300), f.gy + rand(-210, 0), 2);
+    if (f.dieT <= 0) f.state = 'gone';
+  }
+  if (f.state === 'gone' || f.x < -340) {
+    for (const e of enemies) if (e.mount && e.mount.obj === f) e.dead = true;
+    fort = null;
+  }
+}
+function destroyFort() {
+  const f = fort;
+  f.state = 'dying'; f.dieT = 96;
+  addScore(10000);
+  explode(f.x + f.core.dx, f.gy + f.core.dy, 3);
+  for (const e of enemies) if (e.mount && e.mount.obj === f && !e.dead) killEnemy(e);
+  dropCap(f.x + f.core.dx - 40, f.gy - 75);
+  banner = { text: '要塞撃破！', sub: '+10000', t: 140 };
+  shake = 14;
+}
+
+// ---------- ボス：大型戦艦 ----------
+function spawnBoss() {
+  const d = D();
+  boss = {
+    x: W + 230, y: H / 2 - 6, oy: H / 2 - 6, state: 'enter', t: 0, ft: 0, dieT: 0,
+    fanT: 90, aimT: 160, ringT: 240, burst: 0, burstT: 0,
+    body: [[-100, -38, 240, 76], [-50, -72, 160, 34], [-50, 38, 160, 34], [-165, -58, 65, 34], [-165, 24, 65, 34],
+           [140, -62, 36, 42], [140, 20, 36, 42]],
+    plates: [{ dx: -158, hp: 0, flash: 0 }, { dx: -140, hp: 0, flash: 0 }, { dx: -122, hp: 0, flash: 0 }],
+    plateY: -22, plateW: 9, plateH: 44,
+    core: { dx: -100, dy: 0, r: 18, hp: Math.round(40 * d.hp), max: 0, flash: 0 },
+    onDestroy: destroyBoss
+  };
+  boss.plates.forEach(p => { p.hp = Math.round(6 * d.hp); });
+  boss.core.max = boss.core.hp;
+  banner = { text: '警告', sub: '巨大戦艦 接近中', t: 180, warn: true };
+  sfx('warn');
+}
+function updateBoss() {
+  const b = boss, d = D();
+  b.t++;
+  if (b.core.flash > 0) b.core.flash--;
+  for (const p of b.plates) if (p.flash > 0) p.flash--;
+  if (b.state === 'enter') {
+    b.x += (700 - b.x) * 0.018 - 0.3;
+    if (b.x <= 702) { b.x = 700; b.state = 'fight'; b.ft = 0; }
+    b.oy = b.y;   // 体当たり判定の前に同期
+    if (P.alive && structHitsPlayer(b)) killPlayer();
+  } else if (b.state === 'fight') {
+    b.ft++;
+    b.y = H / 2 - 6 + 150 * Math.sin(b.ft * 0.011);
+    b.x = 700 + 45 * Math.sin(b.ft * 0.0047);
+    b.oy = b.y;   // 体当たり判定の前に同期（1更新遅れを防ぐ）
+    const rage = b.core.hp < b.core.max * 0.5;
+    if (--b.fanT <= 0) {           // 艦首から扇状弾
+      b.fanT = Math.round((rage ? 70 : 90) / d.fr);
+      const n = G.loop >= 2 ? 7 : 5;
+      for (const s of [-41, 41]) for (let k = 0; k < n; k++) {
+        eShot(b.x - 165, b.y + s, Math.PI + (k - (n - 1) / 2) * 0.17 + (s < 0 ? -0.08 : 0.08), 2.8 * d.bs);
+      }
+      sfx('eshot');
+    }
+    if (--b.aimT <= 0) { b.aimT = Math.round(150 / d.fr); b.burst = 3; b.burstT = 0; }
+    if (b.burst > 0 && --b.burstT <= 0) {   // 甲板砲から狙い撃ち
+      b.burst--; b.burstT = 8;
+      aimShot(b.x + 30, b.y - 78, 3.6); aimShot(b.x + 30, b.y + 78, 3.6);
+    }
+    if (rage && --b.ringT <= 0) {           // 怒り時：全方位弾
+      b.ringT = Math.round(200 / d.fr);
+      const n = 12 + 2 * (G.loop - 1), off = Math.random() * TAU;
+      for (let k = 0; k < n; k++) eShot(b.x - 60, b.y, off + k * TAU / n, 2.2 * d.bs);
+    }
+    if (P.alive && structHitsPlayer(b)) killPlayer();
+  } else if (b.state === 'dying') {
+    b.dieT--; b.x += 0.4; b.y += 0.5;
+    if (b.dieT % 5 === 0) explode(b.x + rand(-160, 170), b.y + rand(-70, 70), 2);
+    if (b.dieT <= 0) { explode(b.x, b.y, 4); boss = null; shake = 20; toClear(); return; }
+  }
+  b.oy = b.y;
+}
+function destroyBoss() {
+  boss.state = 'dying'; boss.dieT = 150;
+  addScore(30000);
+  ebul.length = 0;
+  explode(boss.x + boss.core.dx, boss.y, 3);
+  shake = 12;
+}
+
+// ============================================================
+//  カプセル・敵弾・パーティクル
+// ============================================================
+function updateCaps() {
+  for (const c of caps) {
+    c.t++;
+    if (c.death && !P.alive) {
+      // 死亡時カプセルは復帰まで流さずその場で待つ（スクロールする地形に埋まらないよう隙間内に保つ）
+      c.y = clamp(c.y + Math.sin(c.t * 0.08) * 0.4, ceilY(c.x) + 16, groundY(c.x) - 16);
+      continue;
+    }
+    c.x -= 0.9 + G.scrollSpeed * 0.4;
+    c.y += Math.sin(c.t * 0.08) * 0.4;
+    if (c.x < -20) { c.dead = true; continue; }
+    if (P.alive) {
+      const dx = c.x - P.x, dy = c.y - P.y;
+      if (dx * dx + dy * dy < 22 * 22) {
+        c.dead = true;
+        P.gauge = (P.gauge + 1) % 6;
+        addScore(100);
+        sfx('cap');
+      }
+    }
+  }
+  compact(caps);
+}
+// 1更新の間の自機（基準点を ox だけ前にずらす）と弾の最接近距離の2乗。
+// 自機は P.px,py → P.x,y、弾は (x-vx,y-vy) → (x,y) を同時に直線移動したとみなす（速いドラッグのすり抜け防止）。
+// 最接近時の自機基準点からの相対Xを sweptRX に残す。
+let sweptRX = 0;
+function sweptD2(b, ox) {
+  const sx = (b.x - b.vx) - (P.px + ox), sy = (b.y - b.vy) - P.py;
+  const mx = (b.x - (P.x + ox)) - sx, my = (b.y - P.y) - sy, L = mx * mx + my * my;
+  const t = L > 0 ? clamp(-(sx * mx + sy * my) / L, 0, 1) : 1;
+  const cx = sx + mx * t, cy = sy + my * t;
+  sweptRX = cx;
+  return cx * cx + cy * cy;
+}
+function updateEBullets() {
+  for (const b of ebul) {
+    b.x += b.vx; b.y += b.vy;
+    if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) { b.dead = true; continue; }
+    if (b.y > groundY(b.x) || b.y < ceilY(b.x)) { b.dead = true; continue; }
+    if (!P.alive) continue;
+    if (P.shield > 0) {                      // 前面シールド（中心は自機の20px前。自機より前方の弾だけ）
+      const rr = 22 + b.r, d2 = sweptD2(b, 20);
+      if (d2 < rr * rr && sweptRX > -16) {
+        b.dead = true; P.shield--; P.shieldFlash = 8; spark(b.x, b.y, '#7ff'); sfx('shield');
+        continue;
+      }
+    }
+    if (P.inv <= 0) {
+      const rr = b.r + 3;
+      if (sweptD2(b, 0) < rr * rr) { b.dead = true; killPlayer(); }
+    }
+  }
+  compact(ebul);
+}
+function updateParticles() {
+  for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vx *= 0.96; p.vy *= 0.96; if (--p.life <= 0) p.dead = true; }
+  compact(parts);
+  for (const r of rings) { r.r += r.vr; if (--r.life <= 0) r.dead = true; }
+  compact(rings);
+  for (const t of texts) { t.y -= 0.5; if (--t.t <= 0) t.dead = true; }
+  compact(texts);
+}
+
+// ============================================================
+//  更新
+// ============================================================
+function stepGame() {
+  G.t++;
+  const lock = fort && (fort.state === 'dying' || (fort.state === 'alive' && fort.x <= 600 && !fort.released));
+  G.scrollSpeed = lock ? 0 : BASE_SCROLL;
+  G.scrollX += G.scrollSpeed;
+  while (G.evIdx < G.events.length && G.scrollX >= G.events[G.evIdx].at) spawnEvent(G.events[G.evIdx++]);
+  updatePlayer();
+  if (state !== 'play') return;
+  updateEnemies();
+  if (fort) updateFort();
+  if (boss) updateBoss();
+  if (state !== 'play') return;
+  updatePBullets();
+  updateEBullets();
+  updateCaps();
+  updateParticles();
+  if (banner && --banner.t <= 0) banner = null;
+}
+function update() {
+  frameCount++;
+  if (gpNotice && --gpNotice.t <= 0) gpNotice = null;
+  if (!(state === 'play' && paused)) { updateStars(); nebX += 0.12; }
+  if (shake > 0) { shake *= 0.88; if (shake < 0.3) shake = 0; }
+  if (pressed.KeyM) { muted = !muted; applyMute(); }
+  const start = pressed.KeyZ || pressed.Space || pressed.Enter || pressed.NumpadEnter;
+  const gpOk = pressed.GpShot || pressed.GpStart;   // コントローラーの決定（A / X / START）
+  const tap = pressed.TouchTap;                     // タッチ（プレイ中以外の画面タップ）
+  switch (state) {
+    case 'title':
+      titleT++;
+      if (start || gpOk || tap) newGame();
+      break;
+    case 'play':
+      if (PAUSE_TOGGLES.some(k => pressed[k])) {
+        paused = !paused;
+        if (paused) discardTouchMove();   // 手動ポーズでも未消費のドラッグ量・指よけ補正は捨てる
+        sfx('pause');
+      }
+      if (paused) { if (pressed.KeyR) newGame(); }
+      else stepGame();
+      break;
+    case 'gameover':
+      stateT++; updateParticles();
+      // コントローラー／タッチは死亡直後の連打で画面を飛ばさないよう少し待ってから受け付ける
+      if (pressed.KeyR || (stateT > 45 && (gpOk || tap))) newGame();
+      break;
+    case 'clear':
+      stateT++; updateParticles();
+      if ((stateT > 90 && (start || gpOk || tap)) || stateT > 600) nextLoop();
+      break;
+  }
+  for (const k in pressed) delete pressed[k];
+}
+
+// ============================================================
+//  描画
+// ============================================================
+function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); }
+function poly(pts, color, flipY) {
+  ctx.fillStyle = color; ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) {
+    const x = pts[i][0], y = flipY ? -pts[i][1] : pts[i][1];
+    if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  }
+  ctx.closePath(); ctx.fill();
+}
+function drawBackground() {
+  ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, W, H);
+  const off = nebX % W;
+  ctx.drawImage(neb, -off, 0, W, H);
+  ctx.drawImage(neb, W - off, 0, W, H);
+  for (const L of starLayers) {
+    ctx.globalAlpha = L.a; ctx.fillStyle = L.c;
+    for (const p of L.pts) ctx.fillRect(p.x, p.y, L.s, L.s);
+  }
+  ctx.globalAlpha = 1;
+}
+const TX = new Float32Array(160), TF = new Float32Array(160), TC = new Float32Array(160);
+function drawTerrain() {
+  const off = G.scrollX % 8;
+  let n = 0, maxF = 0, maxC = 0;
+  for (let x = -off; x <= W + 8; x += 8) {   // 頂点をワールド座標の8px格子に固定（揺らぎ防止）
+    const wx = x + G.scrollX, f = floorH(wx), c = ceilH(wx);
+    TX[n] = x; TF[n] = H - f; TC[n] = c;
+    if (f > maxF) maxF = f; if (c > maxC) maxC = c;
+    n++;
+  }
+  if (maxF > 0) {
+    ctx.beginPath(); ctx.moveTo(TX[0], H);
+    for (let i = 0; i < n; i++) ctx.lineTo(TX[i], TF[i]);
+    ctx.lineTo(TX[n - 1], H); ctx.closePath();
+    ctx.fillStyle = floorGrad; ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TF[i]) : ctx.moveTo(TX[i], TF[i]);
+    ctx.strokeStyle = '#72e6c0'; ctx.stroke();
+    ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TF[i] + 12) : ctx.moveTo(TX[i], TF[i] + 12);
+    ctx.strokeStyle = 'rgba(70,170,150,0.35)'; ctx.stroke();
+  }
+  if (maxC > 0) {
+    ctx.beginPath(); ctx.moveTo(TX[0], 0);
+    for (let i = 0; i < n; i++) ctx.lineTo(TX[i], TC[i]);
+    ctx.lineTo(TX[n - 1], 0); ctx.closePath();
+    ctx.fillStyle = ceilGrad; ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TC[i]) : ctx.moveTo(TX[i], TC[i]);
+    ctx.strokeStyle = '#72e6c0'; ctx.stroke();
+    ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TC[i] - 12) : ctx.moveTo(TX[i], TC[i] - 12);
+    ctx.strokeStyle = 'rgba(70,170,150,0.35)'; ctx.stroke();
+  }
+}
+function drawShip(x, y, tilt) {
+  ctx.save(); ctx.translate(x, y);
+  // 噴射炎
+  ctx.globalCompositeOperation = 'lighter';
+  const fl = 8 + Math.random() * 8;
+  ctx.fillStyle = 'rgba(70,170,255,0.75)';
+  ctx.beginPath(); ctx.moveTo(-13, -4); ctx.lineTo(-13 - fl, 0); ctx.lineTo(-13, 4); ctx.fill();
+  ctx.fillStyle = 'rgba(220,245,255,0.9)';
+  ctx.beginPath(); ctx.moveTo(-13, -2); ctx.lineTo(-13 - fl * 0.5, 0); ctx.lineTo(-13, 2); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  // 主翼（傾きで形が変わる）
+  const t = tilt * 3;
+  poly([[3, -4], [-7, -15 + t], [-15, -15 + t], [-11, -4]], '#2a68d0');
+  poly([[3, 4], [-7, 15 + t], [-15, 15 + t], [-11, 4]], '#2a68d0');
+  ctx.fillStyle = '#ff5a6a'; ctx.fillRect(-14, -14 + t, 5, 2); ctx.fillRect(-14, 12 + t, 5, 2);
+  // 機体
+  poly([[24, 0], [6, -6], [-14, -5], [-14, 5], [6, 6]], '#e3ecff');
+  ctx.fillStyle = '#8aa3d6'; ctx.fillRect(-14, 1, 18, 3);
+  // キャノピー
+  ctx.fillStyle = '#4fe0ff'; ctx.beginPath(); ctx.ellipse(5, -2, 6, 2.6, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+function drawOption(x, y) {
+  ctx.save(); ctx.translate(x, y);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = 'rgba(255,130,40,0.32)'; circle(0, 0, 12);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#ffae45'; circle(0, 0, 7);
+  ctx.fillStyle = '#fff3d0'; circle(0, 0, 3);
+  ctx.rotate(frameCount * 0.15);
+  ctx.strokeStyle = 'rgba(255,220,150,0.8)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.ellipse(0, 0, 11, 4, 0, 0, TAU); ctx.stroke();
+  ctx.restore();
+}
+function drawPlayer() {
+  if (!P.alive) return;
+  for (let i = P.options - 1; i >= 0; i--) { const o = optPos(i); drawOption(o.x, o.y); }
+  const blink = P.inv > 0 && ((frameCount >> 2) & 1);   // 無敵中は点滅
+  if (!blink) drawShip(P.x, P.y, P.tilt);
+  if (P.shield > 0) {
+    const a = 0.35 + 0.5 * (P.shield / SHIELD_HP);
+    ctx.strokeStyle = P.shieldFlash > 0 ? '#ffffff' : `rgba(120,240,255,${a})`;
+    ctx.lineWidth = 3;
+    const layers = Math.min(3, Math.ceil(P.shield / 2));
+    for (let k = 0; k < layers; k++) { ctx.beginPath(); ctx.arc(P.x + 6, P.y, 20 + k * 5, -1.1, 1.1); ctx.stroke(); }
+  }
+}
+function drawEnemy(e) {
+  const fl = e.flash > 0;
+  ctx.save(); ctx.translate(e.x, e.y);
+  switch (e.type) {
+    case 'wave': {
+      ctx.rotate(e.t * 0.12);
+      ctx.fillStyle = fl ? '#fff' : '#d24cff';
+      ctx.beginPath();
+      ctx.moveTo(13, 0); ctx.lineTo(3, 3); ctx.lineTo(0, 13); ctx.lineTo(-3, 3);
+      ctx.lineTo(-13, 0); ctx.lineTo(-3, -3); ctx.lineTo(0, -13); ctx.lineTo(3, -3);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = fl ? '#fff' : '#ffd8ff'; circle(0, 0, 4);
+      break;
+    }
+    case 'straight': {
+      if (e.red) {
+        ctx.strokeStyle = `rgba(255,90,60,${0.4 + 0.3 * Math.sin(e.t * 0.3)})`; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, 16, 0, TAU); ctx.stroke();
+      }
+      poly([[-14, 0], [10, -9], [5, 0], [10, 9]], fl ? '#fff' : (e.red ? '#ff4a3d' : '#9be14a'));
+      ctx.fillStyle = '#ffcf6a'; circle(8, 0, 2.5);
+      break;
+    }
+    case 'aimer': {
+      const a = P && P.alive ? Math.atan2(P.y - e.y, P.x - e.x) : Math.PI;
+      poly([[4, -12], [16, -18], [12, -6]], '#1d7f75');
+      poly([[4, 12], [16, 18], [12, 6]], '#1d7f75');
+      ctx.fillStyle = fl ? '#fff' : '#2fb7a8'; circle(0, 0, 14);
+      ctx.fillStyle = '#0d3c38'; circle(0, 0, 9);
+      ctx.fillStyle = '#e8fffb'; circle(Math.cos(a) * 3, Math.sin(a) * 3, 5);
+      ctx.fillStyle = '#ff3b5c'; circle(Math.cos(a) * 5, Math.sin(a) * 5, 2.4);
+      break;
+    }
+    case 'turret': {
+      const flip = e.side === 'ceil';
+      if (flip) ctx.scale(1, -1);
+      const la = flip ? -e.ang : e.ang;
+      ctx.save(); ctx.translate(0, -8); ctx.rotate(la);
+      ctx.fillStyle = fl ? '#fff' : '#d9d2b8'; ctx.fillRect(0, -2.5, 17, 5);
+      ctx.restore();
+      ctx.fillStyle = fl ? '#fff' : '#c98a3a';
+      ctx.beginPath(); ctx.arc(0, -2, 11, Math.PI, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#6b4a20'; ctx.fillRect(-14, -3, 28, 5);
+      ctx.fillStyle = '#ffe28a'; ctx.fillRect(-2, -9, 4, 3);
+      break;
+    }
+  }
+  ctx.restore();
+}
+function drawCorePlates(s, ox, oy) {
+  const c = s.core;
+  if (c.hp > 0) {
+    const pulse = 0.6 + 0.4 * Math.sin(frameCount * 0.15);
+    const cx = ox + c.dx, cy = oy + c.dy, ratio = c.hp / c.max;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(80,200,255,${0.28 * pulse})`; circle(cx, cy, c.r + 10);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = c.flash ? '#ffffff' : ratio > 0.5 ? '#58d8ff' : ratio > 0.25 ? '#ffb347' : '#ff4d5e';
+    circle(cx, cy, c.r);
+    ctx.fillStyle = '#ffffff'; circle(cx, cy, c.r * 0.35 * pulse + 2);
+  }
+  for (const p of s.plates) {
+    if (p.hp <= 0) continue;
+    ctx.fillStyle = p.flash ? '#ffffff' : '#a3b3da';
+    ctx.fillRect(ox + p.dx, oy + s.plateY, s.plateW, s.plateH);
+    ctx.fillStyle = '#5d6c92';
+    ctx.fillRect(ox + p.dx + s.plateW - 3, oy + s.plateY, 3, s.plateH);
+  }
+}
+function drawFort() {
+  const f = fort, x = f.x, gy = f.gy;
+  ctx.save();
+  if (f.state === 'dying') { ctx.globalAlpha = 0.55 + 0.45 * Math.random(); ctx.translate(rand(-2, 2), (96 - f.dieT) * 0.35); }
+  ctx.fillStyle = '#07080f'; ctx.fillRect(x, gy - 105, 72, 60);    // コアの奥まった開口部
+  for (const r of f.body) {
+    ctx.fillStyle = '#2b3245'; ctx.fillRect(x + r[0], gy + r[1], r[2], r[3]);
+    ctx.fillStyle = '#56627f'; ctx.fillRect(x + r[0], gy + r[1], r[2], 4);
+    ctx.strokeStyle = '#141824'; ctx.lineWidth = 2; ctx.strokeRect(x + r[0] + 1, gy + r[1] + 1, r[2] - 2, r[3] - 2);
+  }
+  ctx.fillStyle = '#1b2030';
+  for (let i = 0; i < 5; i++) ctx.fillRect(x + 92 + i * 42, gy - 120, 30, 8);
+  ctx.fillStyle = '#d6a23a';
+  for (let i = 0; i < 6; i++) ctx.fillRect(x + 82 + i * 36, gy - 30, 18, 6);
+  const on = (frameCount >> 4) & 1;
+  ctx.fillStyle = on ? '#ff4040' : '#5a1a1a';
+  ctx.fillRect(x + 125, gy - 200, 8, 8); ctx.fillRect(x + 227, gy - 200, 8, 8);
+  drawCorePlates(f, x, gy);
+  ctx.restore();
+}
+function drawBoss() {
+  const b = boss;
+  ctx.save(); ctx.translate(b.x, b.y);
+  if (b.state === 'dying') ctx.globalAlpha = 0.55 + 0.45 * Math.random();
+  // 噴射炎（後方）
+  ctx.globalCompositeOperation = 'lighter';
+  for (const sy of [-41, 41]) {
+    const fl = 18 + Math.random() * 14;
+    ctx.fillStyle = 'rgba(90,170,255,0.55)';
+    ctx.beginPath(); ctx.moveTo(176, sy - 14); ctx.lineTo(176 + fl, sy); ctx.lineTo(176, sy + 14); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  // エンジン
+  ctx.fillStyle = '#2a2347'; ctx.fillRect(140, -62, 36, 42); ctx.fillRect(140, 20, 36, 42);
+  ctx.fillStyle = '#6b5aa8';
+  for (let i = 0; i < 3; i++) { ctx.fillRect(146 + i * 10, -58, 4, 34); ctx.fillRect(146 + i * 10, 24, 4, 34); }
+  // 甲板・船体・艦首
+  poly([[-50, -38], [-28, -72], [100, -72], [112, -38]], '#4b3a78');
+  poly([[-50, -38], [-28, -72], [100, -72], [112, -38]], '#4b3a78', true);
+  poly([[-100, -38], [112, -38], [140, -28], [140, 28], [112, 38], [-100, 38]], '#33285a');
+  poly([[-100, -24], [-165, -28], [-165, -54], [-100, -58]], '#5e4a96');
+  poly([[-100, -24], [-165, -28], [-165, -54], [-100, -58]], '#5e4a96', true);
+  ctx.fillStyle = '#090614'; ctx.fillRect(-165, -24, 66, 48);       // コアへの通路
+  ctx.fillStyle = '#8f7bd6'; ctx.fillRect(-100, -38, 240, 3); ctx.fillRect(-100, 35, 240, 3);
+  ctx.fillStyle = '#ffd36b';
+  for (let i = 0; i < 9; i++) { ctx.fillRect(-70 + i * 20, -5, 10, 3); ctx.fillRect(-20 + i * 13, -60, 6, 3); ctx.fillRect(-20 + i * 13, 57, 6, 3); }
+  // 甲板砲
+  for (const sy of [-1, 1]) {
+    const gx = 30, gyy = sy * 76;
+    ctx.save(); ctx.translate(gx, gyy);
+    ctx.rotate(P && P.alive ? Math.atan2(P.y - (b.y + gyy), P.x - (b.x + gx)) : Math.PI);
+    ctx.fillStyle = '#cbbff2'; ctx.fillRect(0, -3, 18, 6);
+    ctx.restore();
+    ctx.fillStyle = '#7a6aa8'; circle(gx, gyy, 9);
+  }
+  // 艦首砲口（発射前に光る）
+  ctx.fillStyle = (b.state === 'fight' && b.fanT < 18) ? '#ffffff' : '#ff8a3d';
+  circle(-165, -41, 5); circle(-165, 41, 5);
+  ctx.restore();
+  ctx.save();
+  if (b.state === 'dying') ctx.globalAlpha = 0.7;
+  drawCorePlates(b, b.x, b.y);
+  ctx.restore();
+}
+function drawCaps() {
+  for (const c of caps) {
+    ctx.save(); ctx.translate(c.x, c.y);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(255,140,30,${0.22 + 0.12 * Math.sin(c.t * 0.2)})`; circle(0, 0, 17);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.rotate(c.t * 0.05);
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) { const a = i * TAU / 6; i ? ctx.lineTo(Math.cos(a) * 10, Math.sin(a) * 10) : ctx.moveTo(10, 0); }
+    ctx.closePath();
+    ctx.fillStyle = '#ff8c1a'; ctx.fill();
+    ctx.strokeStyle = '#ffe2a8'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff4c6'; circle(0, 0, 4);
+    ctx.restore();
+  }
+}
+function drawPBullets() {
+  for (const b of pbul) {
+    switch (b.kind) {
+      case 'shot':
+        ctx.fillStyle = 'rgba(80,200,255,0.35)'; ctx.fillRect(b.x - 11, b.y - 4, 18, 8);
+        ctx.fillStyle = '#d8f8ff'; ctx.fillRect(b.x - 8, b.y - 2, 14, 4);
+        break;
+      case 'dbl':
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(-Math.PI / 4);
+        ctx.fillStyle = 'rgba(80,200,255,0.35)'; ctx.fillRect(-11, -4, 18, 8);
+        ctx.fillStyle = '#d8f8ff'; ctx.fillRect(-8, -2, 14, 4);
+        ctx.restore();
+        break;
+      case 'laser':
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = 'rgba(60,160,255,0.38)'; ctx.fillRect(b.x - b.len, b.y - 7, b.len, 14);
+        ctx.fillStyle = '#9fe0ff'; ctx.fillRect(b.x - b.len, b.y - 3.5, b.len, 7);
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(b.x - b.len, b.y - 1.2, b.len, 2.4);
+        ctx.globalCompositeOperation = 'source-over';
+        break;
+      case 'missile': {
+        ctx.save(); ctx.translate(b.x, b.y);
+        if (!b.crawl) ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.fillStyle = '#ffb040'; ctx.fillRect(-7, -2.5, 12, 5);
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(4, -1.5, 4, 3);
+        ctx.fillStyle = 'rgba(255,120,40,0.6)'; ctx.fillRect(-12, -1.5, 5, 3);
+        ctx.restore();
+        break;
+      }
+    }
+  }
+}
+function drawEBullets() {
+  if (!ebul.length) return;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = 'rgba(255,70,150,0.38)';
+  ctx.beginPath();
+  for (const b of ebul) { ctx.moveTo(b.x + 7, b.y); ctx.arc(b.x, b.y, 7, 0, TAU); }
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#ffe2f2';
+  ctx.beginPath();
+  for (const b of ebul) { ctx.moveTo(b.x + 3, b.y); ctx.arc(b.x, b.y, 3, 0, TAU); }
+  ctx.fill();
+}
+function drawParticles() {
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of parts) {
+    const k = p.life / p.max, s = p.s * (0.4 + k);
+    ctx.globalAlpha = Math.min(1, k * 1.4);
+    ctx.fillStyle = p.c; ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+  }
+  ctx.lineWidth = 2;
+  for (const r of rings) {
+    ctx.globalAlpha = r.life / r.max * 0.7;
+    ctx.strokeStyle = '#ffd9a0'; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+function outlinedText(str, x, y, color) {
+  ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(str, x, y);
+  ctx.fillStyle = color; ctx.fillText(str, x, y);
+}
+function drawHUD() {
+  ctx.textBaseline = 'top';
+  ctx.font = 'bold 17px ' + FONT;
+  ctx.textAlign = 'left';   outlinedText('スコア ' + pad(G.score, 8), 16, 10, '#ffffff');
+  ctx.textAlign = 'center'; outlinedText('ハイスコア ' + pad(Math.max(hiScore, G.score), 8), W / 2, 10, '#ffd27a');
+  // タッチ用ポーズボタンを出している間は、その左に寄せる
+  const hudR = (touchUIOn() && state === 'play') ? tbtnLayout().pause.x - 12 : W - 16;
+  ctx.textAlign = 'right';  outlinedText(`第${G.loop}周　残機 ${Math.max(0, G.lives)}`, hudR, 10, '#ffffff');
+  // パワーアップゲージ
+  const cw = 118, ch = 22, gx = (W - cw * 6) / 2, gy = H - ch - 6;
+  ctx.fillStyle = 'rgba(4,8,24,0.72)'; ctx.fillRect(gx - 4, gy - 4, cw * 6 + 8, ch + 8);
+  ctx.font = 'bold 13px ' + FONT; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  for (let i = 0; i < 6; i++) {
+    const x = gx + i * cw, active = P.gauge === i, avail = canActivate(i);
+    if (active) {
+      const p = 0.65 + 0.35 * Math.sin(frameCount * 0.25);
+      ctx.fillStyle = `rgba(255,${150 + 60 * p | 0},40,${p})`;
+      ctx.fillRect(x + 2, gy, cw - 4, ch);
+    }
+    ctx.strokeStyle = active ? '#ffe9b0' : '#3e5fa8'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 2, gy, cw - 4, ch);
+    let label = PW_LABELS[i];
+    if (i === 0 && P.speedLv > 0) label += ' ' + '▶'.repeat(P.speedLv);
+    if (i === 4 && P.options > 0) label += ` ${P.options}`;
+    ctx.fillStyle = active ? (avail ? '#241000' : '#5a3a20') : avail ? '#cfe0ff' : 'rgba(140,155,190,0.38)';
+    ctx.fillText(label, x + cw / 2, gy + ch / 2 + 1);
+    if (!avail) { ctx.fillStyle = active ? '#5a3a20' : 'rgba(140,155,190,0.38)'; ctx.fillRect(x + 14, gy + ch / 2, cw - 28, 1.5); }
+  }
+  ctx.textAlign = 'right'; ctx.font = 'bold 12px ' + FONT;
+  ctx.fillStyle = '#9fb6e8'; ctx.fillText('X:発動', gx - 10, gy + ch / 2 + 1);
+  if (P.shield > 0) { ctx.textAlign = 'left'; ctx.fillStyle = '#8ff4ff'; ctx.fillText('盾 ' + '■'.repeat(P.shield), gx + cw * 6 + 10, gy + ch / 2 + 1); }
+  // ボス耐久
+  const s = boss && boss.state !== 'dying' ? boss : (fort && fort.state === 'alive' && fort.x < W ? fort : null);
+  if (s) {
+    const bw = 300, bx = (W - bw) / 2, by = 38;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(bx - 2, by - 2, bw + 4, 10);
+    ctx.fillStyle = '#ff5a6e'; ctx.fillRect(bx, by, bw * Math.max(0, s.core.hp / s.core.max), 6);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = 'bold 12px ' + FONT;
+    outlinedText(s === boss ? '巨大戦艦 コア' : '要塞 コア', W / 2, by + 10, '#ffc4cc');
+  }
+  // 浮遊テキスト
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px ' + FONT;
+  for (const t of texts) { ctx.globalAlpha = Math.min(1, t.t / 20); outlinedText(t.str, t.x, t.y, t.color); }
+  ctx.globalAlpha = 1;
+  // バナー
+  if (banner) {
+    const a = Math.min(1, banner.t / 25, (200 - banner.t) / 20 + 0.2);
+    ctx.globalAlpha = clamp(a, 0, 1);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '900 44px ' + FONT;
+    const col = banner.warn ? (((frameCount >> 3) & 1) ? '#ff4d5e' : '#ffd0d0') : '#ffffff';
+    outlinedText(banner.text, W / 2, 190, col);
+    if (banner.sub) { ctx.font = 'bold 20px ' + FONT; outlinedText(banner.sub, W / 2, 236, '#ffe3a8'); }
+    ctx.globalAlpha = 1;
+  }
+}
+function dim(a) { ctx.fillStyle = `rgba(0,0,8,${a})`; ctx.fillRect(0, 0, W, H); }
+function drawTitle() {
+  drawShip(220 + Math.sin(titleT * 0.02) * 30, 380 + Math.sin(titleT * 0.035) * 14, Math.cos(titleT * 0.035) * 0.5);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const g = ctx.createLinearGradient(0, 100, 0, 170);
+  g.addColorStop(0, '#e9f6ff'); g.addColorStop(0.5, '#6fc8ff'); g.addColorStop(1, '#2a5fd0');
+  ctx.font = '900 70px ' + FONT;
+  ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.strokeText('蒼穹ベクター', W / 2, 135);
+  ctx.fillStyle = g; ctx.fillText('蒼穹ベクター', W / 2, 135);
+  ctx.font = 'bold 20px ' + FONT; ctx.fillStyle = '#9fc3ff'; ctx.fillText('A Z U R E   V E C T O R', W / 2, 190);
+  ctx.font = '16px ' + FONT; ctx.fillStyle = '#d8e4ff';
+  const lines = ['移動：矢印キー / WASD　　ショット：Z / スペース（長押しで連射）',
+                 'パワーアップ発動：X　　ポーズ：P　　リスタート：R　　音のON/OFF：M',
+                 'オレンジのカプセルを取るとゲージが進む。光っている項目をXで発動！',
+                 'コントローラー：スティック/十字キーで移動　A・Xでショット　B・Yで発動　START/SELECTでポーズ'];
+  const showTouch = isTouchDev || touch.mode;
+  if (showTouch) lines.push('スマホ：画面をドラッグで移動（触れている間は自動連射）　右下ボタンで発動　右上でポーズ');
+  const ly0 = showTouch ? 250 : 262, lsp = showTouch ? 27 : 28;
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, ly0 + i * lsp));
+  if (showTouch && window.innerHeight > window.innerWidth) {
+    ctx.font = 'bold 14px ' + FONT; ctx.fillStyle = '#ffd27a';
+    ctx.fillText('画面を横向きにすると遊びやすくなります', W / 2, 222);
+  }
+  if ((titleT >> 5) & 1 || titleT < 30) {
+    ctx.font = 'bold 24px ' + FONT; ctx.fillStyle = '#ffd27a';
+    ctx.fillText(showTouch ? 'タップ / Z / Enter / A / START でスタート' : 'Z / スペース / Enter / A / START でスタート', W / 2, 400);
+  }
+  ctx.font = '15px ' + FONT; ctx.fillStyle = '#9fb6e8';
+  ctx.fillText('ハイスコア ' + pad(hiScore, 8), W / 2, 450);
+  // コントローラー接続状態
+  ctx.font = 'bold 15px ' + FONT;
+  if (!hasGamepadAPI) {
+    ctx.fillStyle = '#7f8fb8'; ctx.fillText('このブラウザはコントローラー非対応です', W / 2, 488);
+  } else if (gpInfo.count > 0) {
+    ctx.fillStyle = '#7fffd0';
+    ctx.fillText('● コントローラー接続中' + (gpInfo.name ? '：' + gpInfo.name : ''), W / 2, 488);
+    if (!gpInfo.standard) {
+      ctx.font = '13px ' + FONT; ctx.fillStyle = '#ffd27a';
+      ctx.fillText('（標準配列ではないため、ボタン配置が異なる場合があります）', W / 2, 512);
+    }
+  } else {
+    ctx.fillStyle = '#7f8fb8'; ctx.fillText('コントローラー未接続（接続後、いずれかのボタンを押すと認識されます）', W / 2, 488);
+  }
+}
+// 接続／切断の一時通知（どの画面でも上部に表示）
+function drawGpNotice() {
+  if (!gpNotice) return;
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  ctx.globalAlpha = Math.min(1, gpNotice.t / 30);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 16px ' + FONT;
+  outlinedText(gpNotice.str, W / 2, 46, '#7fffd0');
+  ctx.globalAlpha = 1;
+}
+function render() {
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  drawBackground();
+  if (shake > 0) ctx.translate(rand(-shake, shake) * 0.5, rand(-shake, shake) * 0.5);
+  if (state === 'title' || !G) {
+    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+    drawTitle();
+    return;
+  }
+  drawTerrain();
+  if (fort) drawFort();
+  drawCaps();
+  for (const e of enemies) drawEnemy(e);
+  if (boss) drawBoss();
+  drawPBullets();
+  drawPlayer();
+  drawEBullets();
+  drawParticles();
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  drawHUD();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (state === 'play' && paused) {
+    dim(0.55);
+    ctx.font = '900 48px ' + FONT; outlinedText('ポーズ中', W / 2, H / 2 - 20, '#ffffff');
+    ctx.font = 'bold 18px ' + FONT;
+    outlinedText(touchUIOn() ? '右上の ▶ ボタン / P / START で再開　／　R で最初から' : 'P / START で再開　／　R で最初から', W / 2, H / 2 + 34, '#cfe0ff');
+  } else if (state === 'gameover') {
+    dim(Math.min(0.6, stateT / 60));
+    ctx.font = '900 60px ' + FONT; outlinedText('ゲームオーバー', W / 2, H / 2 - 50, '#ff5a6e');
+    ctx.font = 'bold 22px ' + FONT; outlinedText(`スコア ${pad(G.score, 8)}　第${G.loop}周`, W / 2, H / 2 + 14, '#ffffff');
+    if (G.score >= hiScore && G.score > 0) outlinedText('ハイスコア更新！', W / 2, H / 2 + 46, '#ffd27a');
+    if ((stateT >> 5) & 1) { ctx.font = 'bold 20px ' + FONT; outlinedText(touch.mode || isTouchDev ? 'タップ / R キー / A ボタンでリスタート' : 'R キー / A ボタンでリスタート', W / 2, H / 2 + 92, '#cfe0ff'); }
+  } else if (state === 'clear') {
+    dim(Math.min(0.55, stateT / 60));
+    ctx.font = '900 54px ' + FONT; outlinedText(`第${G.loop}周 クリア！`, W / 2, H / 2 - 70, '#7fffd0');
+    ctx.font = 'bold 22px ' + FONT;
+    outlinedText('巨大戦艦を撃破した', W / 2, H / 2 - 16, '#ffffff');
+    outlinedText(`残機ボーナス +${G.bonus}`, W / 2, H / 2 + 18, '#ffe3a8');
+    outlinedText(`スコア ${pad(G.score, 8)}`, W / 2, H / 2 + 52, '#ffffff');
+    if (stateT > 90 && ((stateT >> 5) & 1)) {
+      ctx.font = 'bold 18px ' + FONT;
+      outlinedText(`${touch.mode || isTouchDev ? 'タップ / ' : ''}Z / Enter / A ボタンで第${G.loop + 1}周へ（難易度アップ）`, W / 2, H / 2 + 102, '#cfe0ff');
+    }
+  }
+  drawTouchUI();
+}
+// タッチ用ボタン（プレイ中かつタッチ操作中だけ表示。指でドラッグ中はキー／パッドに触れても出し続ける）
+function drawTouchUI() {
+  if (!touchUIOn() || state !== 'play') return;
+  const L = tbtnLayout(), ps = L.pause, pw = L.pwr;
+  ctx.save();
+  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  // 右上：ポーズ（ポーズ中は再開マーク）
+  ctx.fillStyle = 'rgba(8,16,44,0.55)'; ctx.fillRect(ps.x, ps.y, ps.s, ps.s);
+  ctx.strokeStyle = 'rgba(150,190,255,0.75)'; ctx.lineWidth = 2; ctx.strokeRect(ps.x + 1, ps.y + 1, ps.s - 2, ps.s - 2);
+  const cx = ps.x + ps.s / 2, cy = ps.y + ps.s / 2, u = ps.s * 0.16;
+  ctx.fillStyle = '#dfe9ff';
+  if (paused) {
+    ctx.beginPath(); ctx.moveTo(cx - u * 1.2, cy - u * 1.7); ctx.lineTo(cx + u * 1.7, cy); ctx.lineTo(cx - u * 1.2, cy + u * 1.7); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillRect(cx - u * 1.4, cy - u * 1.7, u, u * 3.4); ctx.fillRect(cx + u * 0.4, cy - u * 1.7, u, u * 3.4);
+  }
+  // 右下：パワーアップ発動（発動できる項目が光っているときは点滅）
+  const ready = P.alive && P.gauge >= 0 && canActivate(P.gauge);
+  const pulse = 0.65 + 0.35 * Math.sin(frameCount * 0.25);
+  ctx.globalAlpha = paused ? 0.4 : 1;
+  ctx.fillStyle = ready ? `rgba(255,150,40,${0.35 + 0.3 * pulse})` : 'rgba(8,16,44,0.5)';
+  ctx.beginPath(); ctx.arc(pw.x, pw.y, pw.r, 0, TAU); ctx.fill();
+  ctx.strokeStyle = ready ? '#ffe9b0' : 'rgba(150,190,255,0.6)'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = ready ? '#fff4d8' : 'rgba(200,215,255,0.75)';
+  if (P.gauge >= 0) {
+    ctx.font = `bold ${Math.round(pw.r * 0.32)}px ${FONT}`; ctx.fillText(PW_LABELS[P.gauge], pw.x, pw.y - pw.r * 0.16);
+    ctx.font = `bold ${Math.round(pw.r * 0.26)}px ${FONT}`; ctx.fillText('発動', pw.x, pw.y + pw.r * 0.32);
+  } else {
+    ctx.font = `bold ${Math.round(pw.r * 0.34)}px ${FONT}`; ctx.fillText('発動', pw.x, pw.y);
+  }
+  ctx.restore();
+}
+
+// ============================================================
+//  メインループ：固定ステップ60Hz更新 + rAF描画
+// ============================================================
+let last = performance.now(), acc = 0;
+function frame(now) {
+  acc += Math.min(now - last, 250);
+  last = now;
+  let n = 0;
+  // 60Hzモニタのタイミング揺らぎで更新回数が0/2回にぶれないよう1ms許容
+  pollGamepads();
+  while (acc >= STEP - 1 && n < 5) { update(); acc -= STEP; n++; }
+  if (n === 5) acc = 0;
+  try { musicUpdate(); } catch (err) { /* BGMが鳴らなくてもゲームは続行 */ }
+  render();
+  drawGpNotice();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// 動作確認用の読み取り口（ゲーム進行には影響なし）
+window.__azureVector = { get state() { return state; }, get G() { return G; }, get P() { return P; },
+                         get fort() { return fort; }, get boss() { return boss; }, enemies, ebul, pbul, caps };
+})();
+</script>
+</body>
+</html>
