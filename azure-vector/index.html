@@ -888,7 +888,7 @@ const bossK = () => 1 + 0.06 * (G.stage - 1);                 // 中ボス・ボ
 function makePlayer() {
   const p = { x: 110, y: H / 2, px: 110, py: H / 2, alive: true, inv: 120, respawnT: 0, speedLv: 0, missile: 0, double: 0,
               laser: 0, options: 0, shield: 0, shieldMax: 0, shieldFlash: 0, gauge: -1, shotCd: 0, missileCd: 0, trail: [], tilt: 0,
-              bombs: 0, bombInv: 0 };   // double/laser：レベル（0=未装備〜3）。shield：残り回数、shieldMax：防げる回数の上限（0=未取得）。bombs：ボム所持数（死亡しても持ち越す）。bombInv：ボム無敵の残り（表示の区別用）
+              bombs: 0, bombInv: 0, weapon: 0 };   // double/laser：レベル（0=未装備〜3。持ち替えても両方保持）。weapon：有効な武器（0=通常弾のみ／2=ダブル／3=レーザー。ゲージ番号と同じ）。shield：残り回数、shieldMax：防げる回数の上限（0=未取得）。bombs：ボム所持数（死亡しても持ち越す）。bombInv：ボム無敵の残り（表示の区別用）
   resetTrail(p);
   return p;
 }
@@ -1126,8 +1126,8 @@ function canActivate(i) {
   switch (i) {
     case 0: return P.speedLv < 3;
     case 1: return P.missile < MISSILE_LV_MAX;
-    case 2: return P.double < DOUBLE_LV_MAX;
-    case 3: return P.laser < LASER_LV_MAX;
+    case 2: return P.weapon !== 2 || P.double < DOUBLE_LV_MAX;   // 他の武器からの持ち替えは上限到達済みでも可（切り替えのみ）
+    case 3: return P.weapon !== 3 || P.laser < LASER_LV_MAX;
     case 4: return P.options < 2;
     case 5: return true;                  // シールドは上限なしで累積（取得のたびに上限+1）
     case 6: return P.bombs < BOMB_MAX;
@@ -1139,8 +1139,10 @@ function activatePower() {
   switch (P.gauge) {
     case 0: P.speedLv++; break;
     case 1: P.missile++; break;                        // P.missile はレベル（0=未装備／1／2=上限）
-    case 2: P.double++; P.laser = 0; break;            // ダブル・レーザーはレベル（0〜3）。両者は排他で、持ち替えると相手は Lv0 に戻る
-    case 3: P.laser++; P.double = 0; break;
+    // ダブル・レーザーはレベル（0〜3）。同時に有効なのは最後に選んだ方（P.weapon）だけだが、レベルは両方保持する。
+    // 有効でない武器を選んだときは、すでにレベルがあれば切り替えのみ（レベルは上げない）。未取得なら Lv1 で有効にする
+    case 2: if (P.weapon === 2 || P.double === 0) P.double++; P.weapon = 2; break;
+    case 3: if (P.weapon === 3 || P.laser === 0) P.laser++; P.weapon = 3; break;
     case 4: P.options++; break;
     case 5:
       // 上限は初回 SHIELD_HP（3）、以降取得のたびに+1（上限なし）。展開中なら残りも+1、壊れていれば新しい上限で張り直す
@@ -1305,7 +1307,7 @@ function countOf(kind, src) { let c = 0; for (const b of pbul) if (!b.dead && b.
 function fireWeapons() {
   const srcs = [[P.x + 18, P.y]];
   for (let i = 0; i < P.options; i++) { const o = optPos(i); srcs.push([o.x + 8, o.y]); }
-  if (P.laser) {
+  if (P.weapon === 3 && P.laser) {
     // 撃ち続けている間（このフレームも押している）を記録する。押し始めのフレームが lzHold0（laserBackX で使う）
     if (P.lzFireT !== G.t - 1) P.lzHold0 = G.t;
     P.lzFireT = G.t;
@@ -1318,12 +1320,13 @@ function fireWeapons() {
     }
   } else if (P.shotCd <= 0) {
     // 同時存在数の上限は設けない（以前は発射元ごとに通常弾3発・ダブル2発までで、画面端に消えるまで次が出ず途切れていた）
+    const dbl = P.weapon === 2 ? P.double : 0;   // 保持しているだけ（レーザー有効中・未選択）のダブルLvは発射に使わない
     srcs.forEach((s, i) => {
       pbul.push({ kind: 'shot', x: s[0], y: s[1], vx: 13, vy: 0, src: i, dmg: 1, dead: false });
-      if (P.double >= 1) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false });
-      if (P.double >= 2) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] + 3, vx: 9.2, vy: 9.2, src: i, dmg: 1, dead: false });   // トリプル：斜め下
+      if (dbl >= 1) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false });
+      if (dbl >= 2) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] + 3, vx: 9.2, vy: 9.2, src: i, dmg: 1, dead: false });   // トリプル：斜め下
     });
-    P.shotCd = P.double >= 3 ? SHOT_CD_FAST : SHOT_CD; sfx('shot');
+    P.shotCd = dbl >= 3 ? SHOT_CD_FAST : SHOT_CD; sfx('shot');
   }
   if (P.missile && P.missileCd <= 0) {
     let f = false;
@@ -1346,7 +1349,7 @@ function killPlayer() {
   const cx = Math.max(P.x, 150);
   dropCap(cx, clamp(P.y, ceilY(cx) + 16, groundY(cx) - 16), true);
   // ミサイルLv・ダブルLv・レーザーLv・シールド上限（次の取得で3回に戻る）も含めて全装備をリセット
-  P.speedLv = 0; P.missile = 0; P.double = 0; P.laser = 0; P.options = 0; P.shield = 0; P.shieldMax = 0; P.gauge = -1;
+  P.speedLv = 0; P.missile = 0; P.double = 0; P.laser = 0; P.weapon = 0; P.options = 0; P.shield = 0; P.shieldMax = 0; P.gauge = -1;
   G.lives--;
 }
 function respawn() {
