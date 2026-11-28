@@ -45,7 +45,7 @@ const BOMB_MAX = 3;                // ボムの最大所持数
 const BOMB_ENEMY_DMG = 999;        // ボム：画面内の通常敵へのダメージ（雑魚は一掃）
 const BOMB_CORE_DMG = 15;          // ボム：要塞・ボスの各コアへの固定ダメージ（ガード中・隠れ中のコアには通らない）
 const BOMB_INV = 180;              // ボム発動後の無敵時間（フレーム）
-const OPT_HIT_R = 9;               // オプションの被弾判定半径（敵弾の半径を足して判定）
+const OPT_HIT_R = 9;               // オプションが敵弾を防ぐ判定半径（敵弾の半径を足して判定）
 
 const cv = document.getElementById('c');
 const ctx = cv.getContext && cv.getContext('2d');
@@ -886,9 +886,9 @@ const stageDef = () => STAGES[clamp(G.stage, 1, STAGES.length) - 1];
 const bossK = () => 1 + 0.06 * (G.stage - 1);                 // 中ボス・ボスの耐久の追加倍率
 
 function makePlayer() {
-  const p = { x: 110, y: H / 2, px: 110, py: H / 2, alive: true, inv: 120, respawnT: 0, speedLv: 0, missile: false, double: false,
-              laser: false, options: 0, shield: 0, shieldFlash: 0, gauge: -1, shotCd: 0, missileCd: 0, trail: [], tilt: 0,
-              bombs: 0, bombInv: 0 };   // bombs：ボム所持数（死亡しても持ち越す）。bombInv：ボム無敵の残り（表示の区別用）
+  const p = { x: 110, y: H / 2, px: 110, py: H / 2, alive: true, inv: 120, respawnT: 0, speedLv: 0, missile: 0, double: 0,
+              laser: 0, options: 0, shield: 0, shieldMax: 0, shieldFlash: 0, gauge: -1, shotCd: 0, missileCd: 0, trail: [], tilt: 0,
+              bombs: 0, bombInv: 0 };   // double/laser：レベル（0=未装備〜3）。shield：残り回数、shieldMax：防げる回数の上限（0=未取得）。bombs：ボム所持数（死亡しても持ち越す）。bombInv：ボム無敵の残り（表示の区別用）
   resetTrail(p);
   return p;
 }
@@ -1085,9 +1085,10 @@ function spawnEvent(e) {
 // ============================================================
 //  弾・エフェクト
 // ============================================================
-function eShot(x, y, ang, spd) {
+// noBlock=true の弾（ボス固有の特殊攻撃）はオプションで防げず、すり抜ける（シールドでは従来どおり防げる）
+function eShot(x, y, ang, spd, noBlock) {
   if (ebul.length > 360) return;
-  ebul.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, r: 4, dead: false });
+  ebul.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, r: 4, dead: false, noBlock: !!noBlock });
 }
 function aimShot(x, y, spd, off = 0) {
   const a = Math.atan2(P.y - y, P.x - x) + off;
@@ -1124,11 +1125,11 @@ function optPos(i) { return P.trail[Math.min(P.trail.length - 1, (i + 1) * OPT_G
 function canActivate(i) {
   switch (i) {
     case 0: return P.speedLv < 3;
-    case 1: return !P.missile;
-    case 2: return !P.double;
-    case 3: return !P.laser;
+    case 1: return P.missile < MISSILE_LV_MAX;
+    case 2: return P.double < DOUBLE_LV_MAX;
+    case 3: return P.laser < LASER_LV_MAX;
     case 4: return P.options < 2;
-    case 5: return P.shield <= 0;
+    case 5: return true;                  // シールドは上限なしで累積（取得のたびに上限+1）
     case 6: return P.bombs < BOMB_MAX;
   }
   return false;
@@ -1137,14 +1138,23 @@ function activatePower() {
   if (P.gauge < 0 || !canActivate(P.gauge)) { sfx('deny'); return; }
   switch (P.gauge) {
     case 0: P.speedLv++; break;
-    case 1: P.missile = true; break;
-    case 2: P.double = true; P.laser = false; break;   // ダブルとレーザーは排他
-    case 3: P.laser = true; P.double = false; break;
+    case 1: P.missile++; break;                        // P.missile はレベル（0=未装備／1／2=上限）
+    case 2: P.double++; P.laser = 0; break;            // ダブル・レーザーはレベル（0〜3）。両者は排他で、持ち替えると相手は Lv0 に戻る
+    case 3: P.laser++; P.double = 0; break;
     case 4: P.options++; break;
-    case 5: P.shield = SHIELD_HP; break;
+    case 5:
+      // 上限は初回 SHIELD_HP（3）、以降取得のたびに+1（上限なし）。展開中なら残りも+1、壊れていれば新しい上限で張り直す
+      P.shieldMax = P.shieldMax > 0 ? P.shieldMax + 1 : SHIELD_HP;
+      P.shield = P.shield > 0 ? P.shield + 1 : P.shieldMax;
+      break;
     case 6: P.bombs++; break;                          // ストックするだけ（発動は useBomb）
   }
-  addText(P.x, P.y - 26, PW_NAMES[P.gauge], '#ffd27a');
+  let msg = PW_NAMES[P.gauge];
+  if (P.gauge === 1 && P.missile >= 2) msg = 'ミサイル Lv2！';
+  else if (P.gauge === 2) msg = DOUBLE_NAMES[P.double];
+  else if (P.gauge === 3) msg = LASER_LV[P.laser].name;
+  else if (P.gauge === 5 && P.shieldMax > SHIELD_HP) msg = `シールド強化！（${P.shieldMax}回）`;
+  addText(P.x, P.y - 26, msg, '#ffd27a');
   P.gauge = -1;
   sfx('power');
 }
@@ -1261,15 +1271,33 @@ function updatePlayer() {
   if (touchesTerrain(P.x, P.y)) { killPlayer(); return; }
 }
 // ---- 武器バランス ----
-const SHOT_CD = 14;         // 通常弾（＋ダブル）の発射間隔（フレーム）。押し続けている限り、この間隔で撃ち続ける
+const SHOT_CD = 14;         // 通常弾（＋ダブル／トリプル）の発射間隔（フレーム）。押し続けている限り、この間隔で撃ち続ける
+const SHOT_CD_FAST = 9;     // ダブル Lv3：ショット系の発射間隔を短縮（14/9 ≒ 1.56倍の連射）。ミサイル・レーザーの周期は対象外
+const DOUBLE_LV_MAX = 3;    // ダブル：Lv1=前＋斜め上／Lv2=トリプル（＋斜め下）／Lv3=トリプル＋連射アップ
+const DOUBLE_NAMES = ['', 'ダブル装備！', 'トリプル装備！', 'ショット連射アップ！'];
 const LASER_CD = 4, LASER_V = 17, LASER_LEN = 70;   // 4F毎×17px=68px間隔 < 長さ70px なので途切れない一本のビームに見える
-const LASER_H = 5;          // レーザーの当たり判定の高さ（描画の芯もこの幅）
-const LASER_HIT_IV = 7;     // 同じ対象へのレーザーの再ヒット間隔（フレーム。発射元＝自機／オプションごと）
-const LASER_CORE_MUL = 0.5; // ボス・中ボスのコアへのレーザーダメージ倍率（甲殻越しの減衰ダメージにも掛かる）
+const LASER_H = 5;          // レーザーの当たり判定の高さ（全レベル共通。太さの違いは見た目だけ）
+// レーザーのレベル表。iv＝同じ対象への再ヒット間隔（フレーム。発射元＝自機／オプションごと）、dmg＝1ヒットのダメージ。
+// 通常弾の DPS は 1×60/14 ≒ 4.29/秒。対象別の倍率は付けない（全対象共通）。
+//   Lv1 通常     ：1.5 × 60/14 ≒ 6.43/秒（1.5倍）
+//   Lv2 ハイパー ：1   × 60/7  ≒ 8.57/秒（2倍）
+//   Lv3 ウルトラ ：1.5 × 60/7  ≒ 12.86/秒（3倍）
+// 区間は4F毎に届くので、ボス部位ではクールダウン中の区間を部位の表面で待たせ（laserWait）、明けたフレームで当てて iv 間隔を保つ。
+// 撃ち続けている間、最新の区間（発射から LASER_CD 未満）の当たり判定は砲口までつながっている（laserBackX）。
+// これで砲口直前の部位を飛び越さず、砲口直近の通常敵にも毎フレーム重なるので、距離によらず iv 間隔で当たる。
+// 1.5 は2進で正確に表せるので、HPの端数に誤差はたまらない
+const LASER_LV = [
+  null,
+  { iv: 14, dmg: 1.5, core: 5,  name: 'レーザー装備！',     glow: 'rgba(60,160,255,0.32)', col: '#9fe0ff' },
+  { iv: 7,  dmg: 1,   core: 7,  name: 'ハイパーレーザー！', glow: 'rgba(255,210,40,0.34)', col: '#ffe45a' },
+  { iv: 7,  dmg: 1.5, core: 11, name: 'ウルトラレーザー！', glow: 'rgba(255,50,40,0.36)',  col: '#ff4a3a' },
+];
+const LASER_LV_MAX = 3;
+const MISSILE_LV_MAX = 2;   // ミサイルの最大レベル（Lv1=前下方へ地を這う弾、Lv2=加えて真上にも1発）
 // レーザーがこの対象にダメージを入れてよいか。入れてよければ最終ヒット時刻（G.t）を記録する
 function laserReady(b, t) {
   const lz = t.lzT || (t.lzT = []), last = lz[b.src];
-  if (last !== undefined && G.t >= last && G.t - last < LASER_HIT_IV) return false;
+  if (last !== undefined && G.t >= last && G.t - last < b.iv) return false;
   lz[b.src] = G.t;
   return true;
 }
@@ -1278,23 +1306,33 @@ function fireWeapons() {
   const srcs = [[P.x + 18, P.y]];
   for (let i = 0; i < P.options; i++) { const o = optPos(i); srcs.push([o.x + 8, o.y]); }
   if (P.laser) {
+    // 撃ち続けている間（このフレームも押している）を記録する。押し始めのフレームが lzHold0（laserBackX で使う）
+    if (P.lzFireT !== G.t - 1) P.lzHold0 = G.t;
+    P.lzFireT = G.t;
     if (P.shotCd <= 0) {
       P.shotCd = LASER_CD;
-      srcs.forEach((s, i) => pbul.push({ kind: 'laser', x: s[0] + LASER_LEN, y: s[1], vx: LASER_V, vy: 0, len: LASER_LEN, src: i, dmg: 1, dead: false }));
+      const L = LASER_LV[P.laser];
+      srcs.forEach((s, i) => pbul.push({ kind: 'laser', x: s[0] + LASER_LEN, y: s[1], vx: LASER_V, vy: 0, len: LASER_LEN, src: i,
+                                         lv: P.laser, iv: L.iv, dmg: L.dmg, born: G.t, dead: false }));
       sfx('laser');
     }
   } else if (P.shotCd <= 0) {
     // 同時存在数の上限は設けない（以前は発射元ごとに通常弾3発・ダブル2発までで、画面端に消えるまで次が出ず途切れていた）
     srcs.forEach((s, i) => {
       pbul.push({ kind: 'shot', x: s[0], y: s[1], vx: 13, vy: 0, src: i, dmg: 1, dead: false });
-      if (P.double) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false });
+      if (P.double >= 1) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false });
+      if (P.double >= 2) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] + 3, vx: 9.2, vy: 9.2, src: i, dmg: 1, dead: false });   // トリプル：斜め下
     });
-    P.shotCd = SHOT_CD; sfx('shot');
+    P.shotCd = P.double >= 3 ? SHOT_CD_FAST : SHOT_CD; sfx('shot');
   }
   if (P.missile && P.missileCd <= 0) {
     let f = false;
     srcs.forEach((s, i) => {
-      if (countOf('missile', i) < 1) { pbul.push({ kind: 'missile', x: s[0] - 8, y: s[1] + 6, vx: 2.2, vy: 3.6, src: i, dmg: 2, crawl: false, dead: false }); f = true; }
+      if (countOf('missile', i) >= 1) return;
+      pbul.push({ kind: 'missile', x: s[0] - 8, y: s[1] + 6, vx: 2.2, vy: 3.6, src: i, dmg: 2, crawl: false, dead: false }); f = true;
+      // Lv2：前下方ミサイルが出るフレームにだけ、同じ発射元から真上にも1発（速さは前下方と同じ ≒4.2px/F、威力2、発射元ごとに同時1発まで）。
+      // 発射周期（P.missileCd）は前下方ミサイルだけで決まる。上側が出せなくても周期は Lv1 と同じ
+      if (P.missile >= 2 && countOf('umis', i) < 1) pbul.push({ kind: 'umis', x: s[0] - 8, y: s[1] - 6, vx: 0, vy: -Math.hypot(2.2, 3.6), src: i, dmg: 2, crawl: false, dead: false });
     });
     if (f) P.missileCd = 24;
   }
@@ -1307,7 +1345,8 @@ function killPlayer() {
   // パワーアップはリセット。カプセルを1つ出す（死亡中は流さない。左端すぎると復帰後に回収できないので x>=150）
   const cx = Math.max(P.x, 150);
   dropCap(cx, clamp(P.y, ceilY(cx) + 16, groundY(cx) - 16), true);
-  P.speedLv = 0; P.missile = false; P.double = false; P.laser = false; P.options = 0; P.shield = 0; P.gauge = -1;
+  // ミサイルLv・ダブルLv・レーザーLv・シールド上限（次の取得で3回に戻る）も含めて全装備をリセット
+  P.speedLv = 0; P.missile = 0; P.double = 0; P.laser = 0; P.options = 0; P.shield = 0; P.shieldMax = 0; P.gauge = -1;
   G.lives--;
 }
 function respawn() {
@@ -1339,25 +1378,52 @@ function updatePBullets() {
         else { b.x = nx; b.y = gy - 3; }
       }
       if (b.y < ceilY(b.x)) { b.dead = true; continue; }
+    } else if (b.kind === 'umis') {
+      // 上方向ミサイル：前下方ミサイルの上下反転。天井に着いたら天井に沿って右へ這い、天井が途切れたら真上へ飛び直す
+      if (!b.crawl) {
+        b.x += b.vx; b.y += b.vy;
+        const cy = ceilY(b.x);
+        if (cy > 1 && b.y <= cy + 3) {
+          if (cy > b.y + 12) { b.dead = true; spark(b.x, b.y, '#ffb040'); continue; }
+          b.crawl = true; b.y = cy + 3;
+        }
+      } else {
+        const nx = b.x + 3.6, cy = ceilY(nx);
+        if (cy <= 1) { b.crawl = false; b.vx = 0; b.vy = -Math.hypot(2.2, 3.6); b.x = nx; }
+        else if (cy > b.y + 10) { b.dead = true; spark(b.x + 4, b.y, '#ffb040'); continue; }   // 壁に衝突
+        else { b.x = nx; b.y = cy + 3; }
+      }
+      if (b.y > groundY(b.x)) { b.dead = true; continue; }
+    } else if (b.kind === 'laser') {
+      if (!b.wait) b.x += b.vx;   // 部位のクールダウン明けを待っている区間は、部位の表面で止まったまま
     } else {
       b.x += b.vx; b.y += b.vy;
     }
+    // 画面外で消える。前下方ミサイルは下端 +20px、上方向ミサイルは上端 -20px まで残る（上下対称）
     if (b.x > W + (b.len || 0) + 10 || b.x < -20 || b.y < -20 || b.y > H + 20) { b.dead = true; continue; }
-    if (b.kind !== 'missile' && (b.y > groundY(b.x) || b.y < ceilY(b.x))) { b.dead = true; spark(b.x, b.y); continue; }
+    if (b.kind !== 'missile' && b.kind !== 'umis' && (b.y > groundY(b.x) || b.y < ceilY(b.x))) { b.dead = true; spark(b.x, b.y); continue; }
+    if (b.kind === 'laser') { laserStep(b); continue; }
     hitEnemies(b);
     if (b.dead) continue;
     if (fort && fort.state === 'alive' && hitStruct(fort, b)) { b.dead = true; continue; }
-    if (boss && (boss.state === 'fight' || boss.state === 'enter') && boss.x < W + 120 && hitStruct(boss, b)) { b.dead = true; continue; }
+    if (boss && bossHittable() && hitStruct(boss, b)) { b.dead = true; continue; }
   }
   compact(pbul);
 }
-function hitEnemies(b) {
-  const isL = b.kind === 'laser', br = b.kind === 'missile' ? 6 : 5;
+function bossHittable() { return (boss.state === 'fight' || boss.state === 'enter') && boss.x < W + 120; }
+// lim：レーザー区間の先端をこのXで打ち切る（その先にあるボス・中ボスの部位より奥へは届かない）
+function hitEnemies(b, lim = Infinity) {
+  const isL = b.kind === 'laser', br = (b.kind === 'missile' || b.kind === 'umis') ? 6 : 5;
+  const lx0 = isL ? laserBackX(b) : 0, lw = isL ? Math.min(b.x, lim) - lx0 : 0;
+  if (isL && lw <= 0) return;
   for (const e of enemies) {
     if (e.dead) continue;
     if (isL) {
-      // 貫通：当たっても弾は消えない。同じ敵へは LASER_HIT_IV フレームに1回だけダメージ
-      if (circRect(e.cx, e.cy, e.r, b.x - b.len, b.y - LASER_H / 2, b.len, LASER_H) && laserReady(b, e)) damageEnemy(e, b.dmg);
+      // 貫通ビーム：通常敵では止まらず、この区間（長さ b.len × 太さ LASER_H）に重なる敵すべてに当たる。
+      // 同じ敵へは発射元ごとに b.iv フレーム（レベル別、LASER_LV）に1回だけダメージ。
+      // 要塞の搭載砲台は中ボスの部位なので、ここでは扱わない（laserStep で最も手前の部位として当たり、区間はそこで止まる）
+      if (e.mount) continue;
+      if (circRect(e.cx, e.cy, e.r, lx0, b.y - LASER_H / 2, lw, LASER_H) && laserReady(b, e)) damageEnemy(e, b.dmg);
     } else {
       const dx = e.cx - b.x, dy = e.cy - b.y, rr = e.r + br;
       if (dx * dx + dy * dy < rr * rr) { damageEnemy(e, b.dmg); b.dead = true; return; }
@@ -1460,9 +1526,9 @@ function updateEnemies() {
 //   plates  : 壊せる装甲板 {dx,dy,w,h,hp,max,flash}。弾を遮る
 //   cores   : 弱点 {dx,dy,r,hp,max,flash,guard,gk,hidden,shutter,open,rage}
 //             guard=true の間はダメージ無効。gk は理由（'lock' 封印 / 'shut' 閉鎖 / 'barrier' バリア / 'move' 移動中）
-//             hidden=true は本体に隠れていて当たらない。shutter=true は開閉扉つき（open: 0 閉〜1 開）
+//             hidden=true は本体に隠れていて当たらない（ダメージ無効。レーザーは縁がはみ出していればそこで吸収される）。shutter=true は開閉扉つき（open: 0 閉〜1 開）
 //   devices : バリア発生装置などの小さな壊せる部位 {dx,dy,r,hp,max,flash,dead,prog}
-//   判定順：装置 → 装甲板 → コア → 船体
+//   判定順：通常弾・ミサイルは 装置 → 装甲板 → コア → 船体。レーザーは区間に重なる部位のうち最も手前の1つ（laserFront）
 //   s.core は常に cores[0]（互換用）。全コアの hp が 0 になったら s.onDestroy()
 // ============================================================
 function mkCore(dx, dy, r, hp, o) {
@@ -1493,13 +1559,29 @@ function damageCore(s, c, dmg, quiet) {
   } else if (!quiet) sfx('hit');
   if (s.onHit) s.onHit(c);
 }
+// 部位へのダメージ（通常弾・ミサイル用の hitStruct と、レーザー用の laserHitPart で共通）
+function hitDevice(s, v, dmg) {
+  v.hp -= dmg; v.flash = 3;
+  if (v.hp <= 0) {
+    v.hp = 0; v.dead = true; v.respT = 0;
+    // 加点は装置ごとに初回の破壊だけ（復活した装置の再破壊は0点。撃破演出とバリア解除は毎回）
+    explode(s.x + v.dx, s.oy + v.dy, 2);
+    if (!v.scored) { v.scored = true; addScore(500); }
+    if (s.onDeviceDown) s.onDeviceDown(v);
+    if (s.syncGuard) s.syncGuard();   // 全装置破壊ならバリアをその場で解除（同じ更新の後続弾から通る）
+  } else sfx('hit');
+}
+function hitPlate(s, p, dmg) {
+  p.hp -= dmg; p.flash = 3;
+  if (p.hp <= 0) {
+    explode(s.x + p.dx + p.w / 2, s.oy + p.dy + p.h / 2, 1); addScore(s.plateScore || 200);
+    if (s.onPlateDown) s.onPlateDown(p);
+    if (s.syncGuard) s.syncGuard();   // 全装甲破壊なら封印をその場で解除（同じ更新の後続弾から通る）
+  } else sfx('tink');
+}
+// 通常弾・ダブル・ミサイル用（レーザーは laserStep）。判定順：装置 → 装甲 → コア → 船体
 function hitStruct(s, b) {
-  let x0, y0, w, h;
-  // レーザーは構造物を貫通せず当たった時点で消える（従来どおり）。
-  // ダメージは部位ごとに LASER_HIT_IV フレームに1回だけ。間隔内に当たった分は無音で吸収される
-  const isL = b.kind === 'laser';
-  if (isL) { x0 = b.x - b.len; y0 = b.y - LASER_H / 2; w = b.len; h = LASER_H; }
-  else { x0 = b.x - 5; y0 = b.y - 4; w = 10; h = 8; }
+  const x0 = b.x - 5, y0 = b.y - 4, w = 10, h = 8;
   const ox = s.x, oy = s.oy;
   // ボス登場中（'enter'）は全部位（装置・装甲・コア・船体）が無敵。弾は当たって弾かれるだけ。
   // 弱点の仕掛け（開閉・移動・公転など）は 'fight' に入ってから動くので、その前に削ってギミックを飛ばせないようにする
@@ -1508,52 +1590,147 @@ function hitStruct(s, b) {
   for (const v of s.devices) {
     if (v.dead || !circRect(ox + v.dx, oy + v.dy, v.r, x0, y0, w, h)) continue;
     if (inert) return deflect('#9ff6ff');
-    if (isL && !laserReady(b, v)) return true;
-    v.hp -= b.dmg; v.flash = 3;
-    if (v.hp <= 0) {
-      v.hp = 0; v.dead = true; v.respT = 0;
-      // 加点は装置ごとに初回の破壊だけ（復活した装置の再破壊は0点。撃破演出とバリア解除は毎回）
-      explode(ox + v.dx, oy + v.dy, 2);
-      if (!v.scored) { v.scored = true; addScore(500); }
-      if (s.onDeviceDown) s.onDeviceDown(v);
-      if (s.syncGuard) s.syncGuard();   // 全装置破壊ならバリアをその場で解除（同じ更新の後続弾から通る）
-    } else sfx('hit');
+    hitDevice(s, v, b.dmg);
     return true;
   }
   for (const p of s.plates) {
     if (p.hp <= 0 || !rectRect(x0, y0, w, h, ox + p.dx, oy + p.dy, p.w, p.h)) continue;
     if (inert) return deflect();
-    if (isL && !laserReady(b, p)) return true;
-    p.hp -= b.dmg; p.flash = 3;
-    if (p.hp <= 0) {
-      explode(ox + p.dx + p.w / 2, oy + p.dy + p.h / 2, 1); addScore(s.plateScore || 200);
-      if (s.onPlateDown) s.onPlateDown(p);
-      if (s.syncGuard) s.syncGuard();   // 全装甲破壊なら封印をその場で解除（同じ更新の後続弾から通る）
-    } else sfx('tink');
+    hitPlate(s, p, b.dmg);
     return true;
   }
   for (const c of s.cores) {
     if (c.hp <= 0 || c.hidden || !circRect(ox + c.dx, oy + c.dy, coreHitR(c), x0, y0, w, h)) continue;
     if (inert) { c.deny = 6; return deflect(c.gk === 'barrier' ? '#9ff6ff' : '#c8cce0'); }
-    // 閉じている／装甲・バリアで守られている間は、レーザーも含めて従来どおり無効
+    // 閉じている／装甲・バリアで守られている間は無効
     if (c.guard) { spark(b.x, b.y, c.gk === 'barrier' ? '#9ff6ff' : '#c8cce0'); sfx('tink'); c.deny = 6; }
-    else if (!isL) damageCore(s, c, b.dmg);
-    else if (laserReady(b, c)) damageCore(s, c, b.dmg * LASER_CORE_MUL);
+    else damageCore(s, c, b.dmg);
     return true;
   }
   for (const r of s.body) {
     if (!rectRect(x0, y0, w, h, ox + r[0], oy + r[1], r[2], r[3])) continue;
     if (inert) return deflect();
     if (s.hullDmg) {
-      // 本体（甲殻）への攻撃：コアへ大幅減衰したダメージだけ通す（レーザーはさらに再ヒット間隔と減衰倍率が掛かる）
+      // 本体（甲殻）への攻撃：コアへ大幅減衰したダメージだけ通す（全武器共通のボス側ギミック）
       const c = s.cores.find(k => k.hp > 0 && !k.guard);
-      if (isL && c && !laserReady(b, c)) return true;
       s.hullFlash = 3; spark(b.x, b.y, '#ffcf9a'); sfx('tink');
-      if (c) damageCore(s, c, b.dmg * s.hullDmg * (isL ? LASER_CORE_MUL : 1), true);
+      if (c) damageCore(s, c, b.dmg * s.hullDmg, true);
     } else { spark(b.x, b.y); sfx('tink'); }
     return true;
   }
   return false;
+}
+
+// ---- レーザーとボス・中ボスの部位 ----
+// ビームは部位を貫通しない。区間（長さ b.len × 太さ LASER_H）に重なる部位のうち、空間的に最も手前（プレイヤー側＝帯の中で
+// 左端が最も左）の1つにだけ当たり、その奥の部位・通常敵には届かない。要塞の搭載砲台もここで部位として扱う。
+// 円の部位について、帯 [y0, y1] の中で最も左の点のX
+function circEntryX(cx, cy, r, y0, y1) {
+  const dy = cy < y0 ? y0 - cy : cy > y1 ? cy - y1 : 0;
+  return cx - Math.sqrt(Math.max(0, r * r - dy * dy));
+}
+// 発射元 src（0=自機、1〜=オプション）の砲口のX（fireWeapons の発射位置と同じ）。もうない発射元なら null
+function laserMuzzleX(src) {
+  if (src === 0) return P.x + 18;
+  if (src - 1 >= P.options) return null;
+  const o = optPos(src - 1);
+  return o ? o.x + 8 : null;
+}
+// 区間 b の当たり判定の後端X。撃ち続けている間の最新の区間（発射から LASER_CD 未満＝次の区間がまだ出ていない）は、
+// 砲口から区間の後端までの隙間も含める（ビームは砲口からつながっている）。区間は発射フレームに LASER_V 進んでから判定されるため、
+// これがないと砲口直前の部位を飛び越したり、砲口直近の通常敵に毎フレーム重ならず再ヒット間隔が伸びたりする。
+// 砲口より後ろには伸ばさない
+function laserBackX(b) {
+  const bx = b.x - b.len;
+  if (P.alive && P.lzFireT === G.t && b.born >= P.lzHold0 && G.t - b.born < LASER_CD) {
+    const mx = laserMuzzleX(b.src);
+    if (mx !== null && mx < bx) return mx;
+  }
+  return bx;
+}
+// 区間 b に重なる最も手前の部位 { s: 構造物, k: 種類, o: 部位, x: 手前側の端のX } を返す（なければ null）
+function laserFront(b) {
+  const x0 = laserBackX(b), y0 = b.y - LASER_H / 2, w = b.x - x0, h = LASER_H, y1 = y0 + h;
+  let best = null;
+  const take = (s, k, o, x) => { if (!best || x < best.x) best = { s, k, o, x }; };
+  const scan = s => {
+    const ox = s.x, oy = s.oy;
+    // 同じX（同着）のときは従来の優先順（装置 → 装甲 → コア → 船体 → 搭載砲台）
+    for (const v of s.devices) if (!v.dead && circRect(ox + v.dx, oy + v.dy, v.r, x0, y0, w, h)) take(s, 'dev', v, circEntryX(ox + v.dx, oy + v.dy, v.r, y0, y1));
+    for (const p of s.plates) if (p.hp > 0 && rectRect(x0, y0, w, h, ox + p.dx, oy + p.dy, p.w, p.h)) take(s, 'plate', p, ox + p.dx);
+    // 隠れたコア（hidden）も対象（ダメージは入らないが、本体から縁がはみ出していればビームはそこで吸収される。laserHitPart）
+    for (const c of s.cores) if (c.hp > 0 && circRect(ox + c.dx, oy + c.dy, coreHitR(c), x0, y0, w, h)) take(s, 'core', c, circEntryX(ox + c.dx, oy + c.dy, coreHitR(c), y0, y1));
+    for (const r of s.body) if (rectRect(x0, y0, w, h, ox + r[0], oy + r[1], r[2], r[3])) take(s, 'body', r, ox + r[0]);
+    for (const e of enemies) if (!e.dead && e.mount && e.mount.obj === s && circRect(e.cx, e.cy, e.r, x0, y0, w, h)) take(s, 'turret', e, circEntryX(e.cx, e.cy, e.r, y0, y1));
+  };
+  if (fort && fort.state === 'alive') scan(fort);
+  if (boss && bossHittable()) scan(boss);
+  return best;
+}
+// クールダウン中の対象 t の前で区間 b を待機させる（2=待機）。同じ発射元・同じ対象で待機できるのは1区間だけで、
+// 後から来た区間は従来どおり吸収される（1=消える）。待機中の区間は毎フレーム再判定され、クールダウン明けのフレームで当たる
+function laserWait(b, t) {
+  const q = t.lzW || (t.lzW = []), w = q[b.src];
+  if (w && w !== b && !w.dead && w.wait === t) return 1;
+  q[b.src] = b; b.wait = t;
+  return 2;
+}
+// 選ばれた部位 hp に区間 b を当てる。0=当たらない（使わない）／1=当たって消える／2=クールダウン明けまで部位の表面で待機
+// ダメージは部位ごと・発射元ごとに b.iv フレームに1回、1ヒット=b.dmg（どちらもレベル別、LASER_LV）
+function laserHitPart(hp, b) {
+  const s = hp.s, o = hp.o;
+  if (s.state === 'enter') {   // ボス登場中は全部位が無敵（弾かれて消える）
+    if (hp.k === 'core') o.deny = 6;
+    spark(b.x, b.y, hp.k === 'dev' || (hp.k === 'core' && o.gk === 'barrier') ? '#9ff6ff' : '#c8cce0'); sfx('tink');
+    return 1;
+  }
+  switch (hp.k) {
+    case 'turret':
+      if (!laserReady(b, o)) return laserWait(b, o);
+      damageEnemy(o, b.dmg); return 1;
+    case 'dev':
+      if (!laserReady(b, o)) return laserWait(b, o);
+      hitDevice(s, o, b.dmg); return 1;
+    case 'plate':
+      if (!laserReady(b, o)) return laserWait(b, o);
+      hitPlate(s, o, b.dmg); return 1;
+    case 'core':
+      // 本体の奥に隠れたコア：ダメージは入らないが、ビームはここで吸収される（奥の部位・通常敵には届かない）
+      if (o.hidden) { spark(b.x, b.y, '#c8cce0'); sfx('tink'); return 1; }
+      // 閉じている／装甲・バリアで守られている間は無効。ビームはこのコアに吸収され、奥には届かない
+      if (o.guard) { spark(b.x, b.y, o.gk === 'barrier' ? '#9ff6ff' : '#c8cce0'); sfx('tink'); o.deny = 6; return 1; }
+      if (!laserReady(b, o)) return laserWait(b, o);
+      damageCore(s, o, b.dmg); return 1;
+    case 'body': {
+      if (!s.hullDmg) { spark(b.x, b.y); sfx('tink'); return 1; }
+      // 甲殻（S3）：コアへ大幅減衰したダメージだけ通す。再ヒット間隔はコアに掛かる
+      const c = s.cores.find(k => k.hp > 0 && !k.guard);
+      if (c && !laserReady(b, c)) return laserWait(b, c);
+      s.hullFlash = 3; spark(b.x, b.y, '#ffcf9a'); sfx('tink');
+      if (c) damageCore(s, c, b.dmg * s.hullDmg, true);
+      return 1;
+    }
+  }
+  return 0;
+}
+// レーザー区間1つ分の当たり判定（移動・画面外・地形の処理は updatePBullets 側）
+function laserStep(b) {
+  const hp = laserFront(b);
+  hitEnemies(b, hp ? hp.x : Infinity);   // 通常敵は貫通。ただし最も手前の部位より奥の敵には届かない
+  const r = hp ? laserHitPart(hp, b) : 0;
+  if (r === 2) {
+    // 待機：区間の先端を部位の手前側の端に揃えて止める（重なりを保つため2px食い込ませる。奥の部位へは進まない）。
+    // 後端は発射元の砲口より後ろに出さない（区間を最大 LASER_LEN までの長さに切り詰める。自機が下がれば最大長まで戻る）
+    b.x = Math.min(b.x, hp.x + 2);
+    const mx = laserMuzzleX(b.src);
+    if (mx !== null) {
+      if (b.x <= mx) b.x = mx + 1;   // 発射元が部位に重なっている場合（オプションなど）でも長さを正に保つ
+      b.len = Math.min(LASER_LEN, b.x - mx);
+    }
+  } else {
+    b.wait = null;
+    if (r === 1) b.dead = true;
+  }
 }
 function structHitsPlayer(s, x = P.x, y = P.y) {
   const px = x - 12, py = y - 6, pw = 28, ph = 12;
@@ -1570,8 +1747,9 @@ function tickStructFlash(s) {
   if (s.hullFlash > 0) s.hullFlash--;
 }
 // 弾幕の部品
-function fan(x, y, n, spread, ang, spd) { for (let k = 0; k < n; k++) eShot(x, y, ang + (k - (n - 1) / 2) * spread, spd * D().bs); }
-function ring(x, y, n, spd, off) { const o = off === undefined ? Math.random() * TAU : off; for (let k = 0; k < n; k++) eShot(x, y, o + k * TAU / n, spd * D().bs); }
+function fan(x, y, n, spread, ang, spd, noBlock) { for (let k = 0; k < n; k++) eShot(x, y, ang + (k - (n - 1) / 2) * spread, spd * D().bs, noBlock); }
+// 全方位弾はボス固有の特殊攻撃でだけ使うので、常にオプションで防げない（noBlock）
+function ring(x, y, n, spd, off) { const o = off === undefined ? Math.random() * TAU : off; for (let k = 0; k < n; k++) eShot(x, y, o + k * TAU / n, spd * D().bs, true); }
 function angTo(x, y) { return P.alive ? Math.atan2(P.y - y, P.x - x) : Math.PI; }
 // 攻撃タイマー：period（発射頻度で短縮）ごとに true。first は最初の待ち
 function every(o, key, period, first) {
@@ -1607,7 +1785,7 @@ function spawnFort() {
     turretsLeft: 3, turretsTotal: 0, turretsKilled: 0, unsealed: false, name: '要塞', T: {},
     body: [[0, -45, 70, 45], [0, -150, 70, 45], [70, -150, 230, 150], [110, -210, 140, 60]],
     plates: tk ? [8, 26, 44].map(dx => { const hp = Math.round(4 * d.hp); return { dx, dy: -105, w: 9, h: 60, hp, max: hp, flash: 0 }; }) : [],
-    cores: [mkCore(64, -75, 15, 48 * d.hp * k, { guard: true, gk: tk ? 'lock' : 'shut', shutter: !tk, open: 0 })],
+    cores: [mkCore(64, -75, 15, 24 * d.hp * k, { guard: true, gk: tk ? 'lock' : 'shut', shutter: !tk, open: 0 })],
     devices: [],
     onDestroy: destroyFort,
     // 封印解除後に最後の防壁プレートを壊したら、コアが撃てるようになったことを知らせる
@@ -1648,7 +1826,8 @@ function fortFire(f, kind) {
     case 'fan3': fan(f.x - 6, f.gy - 75, 3, 0.3, Math.PI, 2.8); break;
     case 'fan5': fan(f.x - 6, f.gy - 75, 5, 0.22, Math.PI, 2.7); break;
     case 'aim': if (P.alive) for (let k = -1; k <= 1; k++) aimShot(f.x + 180, f.gy - 214, 3.1, k * 0.14); break;
-    case 'ring': for (let k = 0; k < 9; k++) eShot(f.x + 180, f.gy - 214, Math.PI * (0.82 + k * 0.08), 2.4 * D().bs); break;
+    // 要塞固有の9方向攻撃（fan3/fan5 とは別に選ばれる特殊パターン）。各ボスの ring と揃えてオプションで防げない（noBlock）
+    case 'ring': for (let k = 0; k < 9; k++) eShot(f.x + 180, f.gy - 214, Math.PI * (0.82 + k * 0.08), 2.4 * D().bs, true); break;
   }
 }
 function updateFort() {
@@ -1708,7 +1887,7 @@ const BOSSES = {
     init(b, d, k) {
       b.body = [[-100, -38, 240, 76], [-50, -72, 160, 34], [-50, 38, 160, 34], [-165, -58, 65, 34], [-165, 24, 65, 34],
                 [140, -62, 36, 42], [140, 20, 36, 42]];
-      b.cores = [mkCore(-100, 0, 18, 80 * d.hp * k, { shutter: true, open: 0, guard: true, gk: 'shut' })];
+      b.cores = [mkCore(-100, 0, 18, 40 * d.hp * k, { shutter: true, open: 0, guard: true, gk: 'shut' })];
     },
     update(b) {
       const c = b.core;
@@ -1739,7 +1918,7 @@ const BOSSES = {
       b.plates = [[-166, -30, 12, 24], [-166, 6, 12, 24], [4, -72, 12, 40], [-116, 32, 12, 26]]
         .map(([dx, dy, w, h]) => ({ dx, dy, w, h, hp: ph, max: ph, flash: 0 }));
       b.plateScore = 500;
-      b.cores = [mkCore(-150, 0, 14, 72 * d.hp * k, { guard: true, gk: 'lock' })];
+      b.cores = [mkCore(-150, 0, 14, 36 * d.hp * k, { guard: true, gk: 'lock' })];
     },
     // 防御状態の再計算（毎更新に加え、装甲板が壊れた瞬間にも hitStruct から呼ばれる）
     guard(b) {
@@ -1769,13 +1948,13 @@ const BOSSES = {
     init(b, d, k) {
       b.body = [[-90, -62, 180, 124], [-165, -72, 75, 30], [-165, 42, 75, 30], [90, -44, 56, 88], [-60, -80, 120, 18], [-60, 62, 120, 18]];
       b.hullDmg = 1 / 8;
-      b.cores = [mkCore(-102, 0, 13, 88 * d.hp * k, { col: '#ff4a4a', glow: '255,70,60' })];
+      b.cores = [mkCore(-102, 0, 13, 44 * d.hp * k, { col: '#ff4a4a', glow: '255,70,60' })];
       b.sweep = 0; b.clawSide = 1;
     },
     update(b, d) {
       const c = b.core, rage = c.hp < c.max * 0.5;
       b.sweep += rage ? 0.05 : 0.035;
-      if (every(b, 'sweep', rage ? 9 : 12, 60)) eShot(b.x - 112, b.y, Math.PI + Math.sin(b.sweep) * 0.75, 2.6 * d.bs);   // 首振り連射
+      if (every(b, 'sweep', rage ? 9 : 12, 60)) eShot(b.x - 112, b.y, Math.PI + Math.sin(b.sweep) * 0.75, 2.6 * d.bs, true);   // 首振り連射（波状・noBlock）
       if (every(b, 'claw', 100, 80)) {                       // 左右のハサミから交互に狙い撃ち
         b.clawSide = -b.clawSide;
         const x = b.x - 165, y = b.y + b.clawSide * 57;
@@ -1792,7 +1971,7 @@ const BOSSES = {
     init(b, d, k) {
       b.body = [[-120, -40, 240, 80], [-30, -92, 96, 52], [-30, 40, 96, 52], [120, -26, 52, 52]];
       b.sockets = [[-134, 0], [-46, -70], [-46, 70]];
-      b.cores = [mkCore(-134, 0, 16, 108 * d.hp * k)];
+      b.cores = [mkCore(-134, 0, 16, 54 * d.hp * k)];
       b.phase = 1; b.spin = 0;
     },
     onHit(b, c) {
@@ -1812,7 +1991,7 @@ const BOSSES = {
         if (every(b, 'fan', 130, 120)) { fan(b.x - 120, b.y - 30, 5, 0.2, Math.PI - 0.1, 2.6); fan(b.x - 120, b.y + 30, 5, 0.2, Math.PI + 0.1, 2.6); sfx('eshot'); }
       } else if (b.phase === 2) {
         b.mvSp = 1.3; b.spin += 0.31;
-        if (every(b, 'spiral', 9, 30)) { eShot(cx, cy, b.spin, 2.3 * d.bs); eShot(cx, cy, b.spin + Math.PI, 2.3 * d.bs); }
+        if (every(b, 'spiral', 9, 30)) { eShot(cx, cy, b.spin, 2.3 * d.bs, true); eShot(cx, cy, b.spin + Math.PI, 2.3 * d.bs, true); }   // 螺旋弾（noBlock）
         if (every(b, 'aim2', 150, 90)) { b.burst = 2; b.burstT = 0; }
       } else {
         b.mvSp = 1.6;
@@ -1830,7 +2009,7 @@ const BOSSES = {
     pal: ['#6a9cc8', '#e0f4ff', '#2a4a70', '#ffffff'],
     init(b, d, k) {
       b.body = [[-70, -34, 160, 68], [-140, 20, 72, 46], [38, -92, 96, 46], [90, -20, 60, 40], [-20, 34, 70, 22]];
-      const hp = 52 * d.hp * k;
+      const hp = 26 * d.hp * k;
       b.cores = [mkCore(-152, 42, 15, hp, { label: '左' }), mkCore(24, -69, 15, hp, { label: '右' })];
     },
     onCoreDown(b, c) {
@@ -1852,7 +2031,7 @@ const BOSSES = {
         if (rg && every(b, 'Rr', 150, 30)) ring(x, y, 12 + 2 * (G.loop - 1), 2.2);
       }
       if (rg) b.mvSp = 1.35;
-      if (every(b, 'ice', 200, 160)) fan(b.x - 70, b.y, 3, 0.5, Math.PI, 1.9);   // ゆっくり進む氷塊
+      if (every(b, 'ice', 200, 160)) fan(b.x - 70, b.y, 3, 0.5, Math.PI, 1.9, true);   // ゆっくり進む氷塊（noBlock）
     },
     status(b) {
       return liveCores(b) === 2 ? ['コア 残り 2/2 ─ 片方を壊すと残りが暴走する', '#bfe8ff'] : ['コア 残り 1/2 ─ 暴走中！', '#ff8a9a'];
@@ -1866,7 +2045,7 @@ const BOSSES = {
       b.body = [[-72, -56, 150, 112], [78, -36, 52, 72], [-40, -100, 22, 44], [-40, 56, 22, 44]];
       const dh = Math.max(1, Math.round(9 * d.hp * k));
       b.devices = [[-29, -112], [-29, 112]].map(([dx, dy]) => ({ dx, dy, r: 12, hp: dh, max: dh, flash: 0, dead: false, respT: 0, prog: 0 }));
-      b.cores = [mkCore(-86, 0, 17, 80 * d.hp * k, { guard: true, gk: 'barrier' })];
+      b.cores = [mkCore(-86, 0, 17, 40 * d.hp * k, { guard: true, gk: 'barrier' })];
       b.spin = 0; b.downT = 0;
     },
     onDeviceDown(b) {
@@ -1894,7 +2073,7 @@ const BOSSES = {
       const cx = b.x + c.dx, cy = b.y + c.dy;
       if (c.guard) {
         b.spin += 0.23;
-        if (every(b, 'spiral', 10, 40)) { eShot(cx, cy, b.spin, 2.2 * d.bs); eShot(cx, cy, b.spin + Math.PI, 2.2 * d.bs); }
+        if (every(b, 'spiral', 10, 40)) { eShot(cx, cy, b.spin, 2.2 * d.bs, true); eShot(cx, cy, b.spin + Math.PI, 2.2 * d.bs, true); }   // 螺旋弾（noBlock）
         b.devices.forEach((v, i) => {
           if (!v.dead && every(b, 'dev' + i, 140, 60 + i * 70)) { aimShot(b.x + v.dx, b.y + v.dy, 3.2); sfx('eshot'); }
         });
@@ -1911,7 +2090,7 @@ const BOSSES = {
     pal: ['#4a4a58', '#a8a8b8', '#202028', '#ffcc66'],
     init(b, d, k) {
       b.body = [[-70, -70, 140, 140], [-96, -16, 26, 32], [70, -44, 40, 88], [-40, -90, 80, 20], [-40, 70, 80, 20]];
-      b.cores = [mkCore(-118, 0, 15, 80 * d.hp * k)];
+      b.cores = [mkCore(-118, 0, 15, 40 * d.hp * k)];
       b.th = Math.PI; b.dir = 1; b.orbR = 118; b.turnT = 300;
     },
     update(b) {
@@ -1939,7 +2118,7 @@ const BOSSES = {
       b.plates = [[-214, -30, 11, 60], [-60, -124, 12, 30], [-60, 94, 12, 30]]
         .map(([dx, dy, w, h]) => ({ dx, dy, w, h, hp: ph, max: ph, flash: 0 }));
       b.plateScore = 800;
-      b.cores = [mkCore(-182, 0, 20, 144 * d.hp * k, { guard: true, gk: 'lock' })];
+      b.cores = [mkCore(-182, 0, 20, 72 * d.hp * k, { guard: true, gk: 'lock' })];
       b.phase = 1; b.cyc = 0; b.sock = 0; b.spin = 0;
     },
     onPlateDown(b) {
@@ -1975,12 +2154,12 @@ const BOSSES = {
       } else if (b.phase === 2) {
         if (c.guard) {
           b.spin += 0.27;
-          if (every(b, 'spiral', 9, 10)) for (let a = 0; a < 3; a++) eShot(b.x - 110, b.y, b.spin + a * TAU / 3, 2.3 * d.bs);
+          if (every(b, 'spiral', 9, 10)) for (let a = 0; a < 3; a++) eShot(b.x - 110, b.y, b.spin + a * TAU / 3, 2.3 * d.bs, true);   // 3方向螺旋（noBlock）
         } else if (every(b, 'aim2', 70, 20)) { b.burst = 3; b.burstT = 0; }
         if (every(b, 'ring', 220, 160)) ring(b.x + 40, b.y, 14 + 2 * (G.loop - 1), 2.0);
       } else {
         b.mvSp = 1.4; b.spin -= 0.22;
-        if (every(b, 'spiral3', 10, 10)) for (let a = 0; a < 3; a++) eShot(b.x - 110, b.y, b.spin + a * TAU / 3, 2.4 * d.bs);
+        if (every(b, 'spiral3', 10, 10)) for (let a = 0; a < 3; a++) eShot(b.x - 110, b.y, b.spin + a * TAU / 3, 2.4 * d.bs, true);   // 逆回転3方向螺旋（noBlock）
         if (every(b, 'aim3', 80, 40)) { b.burst = 4; b.burstT = 0; }
         if (every(b, 'fan3', 150, 90)) for (const s of [-1, 1]) fan(b.x - 170, b.y + s * 26, 7, 0.15, Math.PI + s * 0.12, 3.0);
         if (!c.guard && every(b, 'coreShot', 40, 10)) aimShot(cx, cy, 3.4);
@@ -2119,30 +2298,20 @@ function updateEBullets() {
         continue;
       }
     }
-    // オプションの被弾：弾（前位置→現位置）とオプション（前フレーム位置→現位置）を同時に直線移動したとみなし、
+    // オプションによる防御：弾（前位置→現位置）とオプション（前フレーム位置→現位置）を同時に直線移動したとみなし、
     // 相対移動の線分と原点の最短距離で判定（sweptD2 と同じ考え方。すり抜け防止）。
     // オプションの前フレーム位置は軌跡の1つ古い点。軌跡は自機が動いたフレームだけ進むので、動いていなければ現在位置のまま。
-    // シールドはオプションを守らない。無敵中でも消滅する。1発で消えるのは1個だけ
-    if (P.options > 0) {
+    // 当たった敵弾だけを消し、オプションは残る。noBlock の弾（ボスの特殊攻撃）はオプションをすり抜ける
+    if (P.options > 0 && !b.noBlock) {
       const rr = OPT_HIT_R + b.r, ax = b.x - b.vx, ay = b.y - b.vy;
       const moved = P.x !== P.px || P.y !== P.py;
-      let hit = -1;
+      let hit = false;
       for (let i = 0; i < P.options; i++) {
         const o = optPos(i);
         const q = moved ? P.trail[Math.min(P.trail.length - 1, (i + 1) * OPT_GAP + 1)] : o;
-        if (segPtD2(ax - q.x, ay - q.y, b.x - o.x, b.y - o.y, 0, 0) < rr * rr) { hit = i; break; }
+        if (segPtD2(ax - q.x, ay - q.y, b.x - o.x, b.y - o.y, 0, 0) < rr * rr) { hit = true; break; }
       }
-      if (hit >= 0) {
-        // 命中したオプション自身を消す：そのオプションが参照する軌跡区間を取り除き、後続のオプションを1つ分前に詰める。
-        // 軌跡の長さは resetTrail と同じ（OPT_GAP*2+2）に保つため、末尾の点の複製で埋め戻す
-        const o = optPos(hit), n = P.trail.length;
-        b.dead = true;
-        P.trail.splice((hit + 1) * OPT_GAP, OPT_GAP);
-        while (P.trail.length < n) { const t = P.trail[P.trail.length - 1]; P.trail.push({ x: t.x, y: t.y }); }
-        P.options--;
-        explode(o.x, o.y, 1);
-        continue;
-      }
+      if (hit) { b.dead = true; continue; }
     }
     if (P.inv <= 0) {
       const rr = b.r + 3;
@@ -2354,10 +2523,10 @@ function drawPlayer() {
     }
   }
   if (P.shield > 0) {
-    const a = 0.35 + 0.5 * (P.shield / SHIELD_HP);
+    const a = 0.35 + 0.5 * Math.min(1, P.shield / Math.max(SHIELD_HP, P.shieldMax));
     ctx.strokeStyle = P.shieldFlash > 0 ? '#ffffff' : `rgba(120,240,255,${a})`;
     ctx.lineWidth = 3;
-    const layers = Math.min(3, P.shield);   // 残り回数そのまま（3→2→1と減っていく）
+    const layers = Math.min(6, P.shield);   // 残り回数そのまま（…→3→2→1と減っていく）。6層を超える分は HUD の数字で示す
     for (let k = 0; k < layers; k++) { ctx.beginPath(); ctx.arc(P.x + 6, P.y, 20 + k * 5, -1.1, 1.1); ctx.stroke(); }
   }
 }
@@ -2747,23 +2916,27 @@ function drawPBullets() {
         ctx.fillStyle = 'rgba(80,200,255,0.35)'; ctx.fillRect(b.x - 11, b.y - 4, 18, 8);
         ctx.fillStyle = '#d8f8ff'; ctx.fillRect(b.x - 8, b.y - 2, 14, 4);
         break;
-      case 'dbl':
-        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(-Math.PI / 4);
+      case 'dbl':   // 斜め上（vy<0）・斜め下（vy>0＝トリプル）の両方。進行方向に向けて描く
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(Math.atan2(b.vy, b.vx));
         ctx.fillStyle = 'rgba(80,200,255,0.35)'; ctx.fillRect(-11, -4, 18, 8);
         ctx.fillStyle = '#d8f8ff'; ctx.fillRect(-8, -2, 14, 4);
         ctx.restore();
         break;
-      case 'laser':
+      case 'laser': {
         ctx.globalCompositeOperation = 'lighter';
-        // 芯の幅＝当たり判定の高さ（LASER_H）。外側の淡い光は見た目だけ
-        ctx.fillStyle = 'rgba(60,160,255,0.32)'; ctx.fillRect(b.x - b.len, b.y - LASER_H / 2 - 2, b.len, LASER_H + 4);
-        ctx.fillStyle = '#9fe0ff'; ctx.fillRect(b.x - b.len, b.y - LASER_H / 2, b.len, LASER_H);
-        ctx.fillStyle = '#ffffff'; ctx.fillRect(b.x - b.len, b.y - 0.8, b.len, 1.6);
+        // 色・芯の太さはレベル別（Lv1=青5px／Lv2=黄7px／Lv3=赤11px）。当たり判定は全レベル LASER_H（5px）のまま、太さは見た目だけ
+        const L = LASER_LV[b.lv] || LASER_LV[1], hc = L.core, x0 = b.x - b.len;
+        ctx.fillStyle = L.glow; ctx.fillRect(x0, b.y - hc / 2 - 2, b.len, hc + 4);
+        ctx.fillStyle = L.col;  ctx.fillRect(x0, b.y - hc / 2, b.len, hc);
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(x0, b.y - Math.max(0.8, hc * 0.16), b.len, Math.max(1.6, hc * 0.32));
+        if (b.lv >= 3) drawLaserArcs(x0, b.y, b.len, hc);
         ctx.globalCompositeOperation = 'source-over';
         break;
-      case 'missile': {
+      }
+      case 'missile':
+      case 'umis': {
         ctx.save(); ctx.translate(b.x, b.y);
-        if (!b.crawl) ctx.rotate(Math.atan2(b.vy, b.vx));
+        if (!b.crawl) ctx.rotate(Math.atan2(b.vy, b.vx));   // umis は vx=0, vy<0 なので真上向きに描く
         ctx.fillStyle = '#ffb040'; ctx.fillRect(-7, -2.5, 12, 5);
         ctx.fillStyle = '#ffffff'; ctx.fillRect(4, -1.5, 4, 3);
         ctx.fillStyle = 'rgba(255,120,40,0.6)'; ctx.fillRect(-12, -1.5, 5, 3);
@@ -2816,6 +2989,33 @@ function outlinedText(str, x, y, color) {
   ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(str, x, y);
   ctx.fillStyle = color; ctx.fillText(str, x, y);
 }
+// ウルトラレーザーの電気エフェクト：ビームの上下の縁から外へ伸びる稲妻状の火花（毎フレーム形が変わる。見た目だけで判定なし）
+function drawLaserArcs(x0, y, len, hc) {
+  ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+  const n = 1 + (Math.random() * 2 | 0);
+  for (let k = 0; k < n; k++) {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    let x = x0 + Math.random() * len, yy = y + side * hc / 2;
+    ctx.strokeStyle = Math.random() < 0.5 ? 'rgba(255,240,200,0.9)' : 'rgba(255,120,90,0.85)';
+    ctx.beginPath(); ctx.moveTo(x, yy);
+    const steps = 3 + (Math.random() * 3 | 0);
+    for (let j = 0; j < steps; j++) { x += rand(-6, 6); yy += side * rand(2, 5); ctx.lineTo(x, yy); }
+    ctx.stroke();
+    ctx.fillStyle = '#fff6e0'; ctx.fillRect(x - 1, yy - 1, 2, 2);   // 先端の火花
+  }
+  // ビームに沿って走る細い放電（芯のすぐ外側をジグザグに）
+  if (Math.random() < 0.6) {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    ctx.strokeStyle = 'rgba(255,220,220,0.7)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = x0, j = 0; x <= x0 + len; x += 10, j++) {
+      const yy = y + side * (hc / 2 + 1 + Math.random() * 4);
+      if (j === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+  ctx.lineCap = 'butt';   // 他の描画に持ち越さない
+}
 function drawHUD() {
   ctx.textBaseline = 'top';
   ctx.font = 'bold 17px ' + FONT;
@@ -2840,6 +3040,9 @@ function drawHUD() {
     ctx.strokeRect(x + 2, gy, cw - 4, ch);
     let label = PW_LABELS[i];
     if (i === 0 && P.speedLv > 0) label += ' ' + '▶'.repeat(P.speedLv);
+    if (i === 1 && P.missile >= 2) label += ' 2';
+    if (i === 2 && P.double >= 2) label += ' ' + P.double;
+    if (i === 3 && P.laser >= 2) label += ' ' + P.laser;
     if (i === 4 && P.options > 0) label += ` ${P.options}`;
     if (i === 6 && P.bombs > 0) label += ` ${P.bombs}`;
     ctx.fillStyle = active ? (avail ? '#241000' : '#5a3a20') : avail ? '#cfe0ff' : 'rgba(140,155,190,0.38)';
@@ -2850,8 +3053,22 @@ function drawHUD() {
   ctx.fillStyle = '#9fb6e8'; ctx.fillText('X:発動 C:ボム', gx - 10, gy + ch / 2 + 1);
   // ゲージ右側：ボム所持数（常時）→ その右に盾の残り回数（展開中のみ）
   ctx.textAlign = 'left';
-  ctx.fillStyle = P.bombs > 0 ? '#ffd27a' : 'rgba(160,150,120,0.6)'; ctx.fillText('ボム ×' + P.bombs, gr + 10, gy + ch / 2 + 1);
-  if (P.shield > 0) { ctx.fillStyle = '#8ff4ff'; ctx.fillText('盾 ' + '■'.repeat(P.shield), gr + 62, gy + ch / 2 + 1); }
+  const bombTxt = 'ボム ×' + P.bombs;
+  ctx.fillStyle = P.bombs > 0 ? '#ffd27a' : 'rgba(160,150,120,0.6)'; ctx.fillText(bombTxt, gr + 10, gy + ch / 2 + 1);
+  // 上限3回のうちは ■（残り）＋□（使用済み）、上限4回以上は「残り/上限」の数字（右端の余白が約60pxしかないため）
+  // 収まるときは従来どおり gr+62 から左揃え。右端（W-6）からはみ出す大きな値は右端に揃え、
+  // それでもボム表示に重なる長さなら、ボム表示の右〜右端の幅に横方向だけ縮めて描く（fillText の maxWidth）
+  if (P.shield > 0) {
+    const mx = Math.max(P.shieldMax, P.shield);
+    const t = '盾 ' + (mx <= SHIELD_HP ? '■'.repeat(P.shield) + '□'.repeat(mx - P.shield) : `${P.shield}/${mx}`);
+    const sx = gr + 62, rx = W - 6, ty = gy + ch / 2 + 1;
+    ctx.fillStyle = '#8ff4ff';
+    if (sx + ctx.measureText(t).width <= rx) ctx.fillText(t, sx, ty);
+    else {
+      const room = rx - (gr + 10 + ctx.measureText(bombTxt).width + 6);
+      ctx.textAlign = 'right'; ctx.fillText(t, rx, ty, Math.max(20, room)); ctx.textAlign = 'left';
+    }
+  }
   // ボス耐久
   const s = boss && boss.state !== 'dying' ? boss : (fort && fort.state === 'alive' && fort.x < W ? fort : null);
   if (s) {
