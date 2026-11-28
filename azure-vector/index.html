@@ -87,6 +87,117 @@ function rectRect(ax, ay, aw, ah, bx, by, bw, bh) {
 }
 function compact(a) { let j = 0; for (let i = 0; i < a.length; i++) { const o = a[i]; if (!o.dead) a[j++] = o; } a.length = j; }
 function pad(n, len) { return String(Math.floor(n)).padStart(len, '0'); }
+// 種から決まる乱数（ステージ配置を毎回同じにする）
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ============================================================
+//  ステージ定義（8ステージ）
+//  theme: 背景グラデ／星雲／星の色と密度／地形の色
+//  ter:   地形の起伏（hill:丘陵の高さ, cave:洞窟の深さ, f:周波数, ph:位相, ceil:丘陵区間の天井）
+//  mix:   敵編成の重み（wave:編隊, straight:突撃機, aimer:狙撃機, turret:砲台）
+//  bgm:   通常曲／ボス曲（base:旋律, tr:移調, bpm, bass/drum/arp:パターン, swap:旋律とアルペジオの順序入替）
+//  fort:  中ボス要塞（kind:'turret' 砲台を全滅でコア封印解除 / 'shutter' シャッター開放中のみ有効, fire:弾の出し方, col:色調）
+//  boss:  ボスの種類（BOSSES のキー）
+// ============================================================
+const STAGES = [
+  { name: '蒼穹前線', en: 'AZURE FRONT',
+    theme: { bg: ['#02030c', '#090a24', '#040410'],
+             neb: [[110, 80, 140, '90,40,170', 0.30], [330, 190, 120, '20,90,180', 0.26], [230, 40, 90, '170,40,130', 0.16], [420, 120, 100, '40,150,170', 0.16]],
+             stars: ['#8fa8ff', '#d2e2ff', '#ffffff'], dens: 1.0,
+             floor: ['#1f5c52', '#061616'], line: '#72e6c0', line2: 'rgba(70,170,150,0.35)' },
+    ter: { hill: 1, cave: 1, f: 1, ph: 0, ceil: 1 },
+    mix: { wave: 3, straight: 2, aimer: 1, turret: 2 },
+    bgm: { main: { base: 'A', tr: 0, bpm: 150, bass: 'oct8', drum: 'main', arp: 'up' },
+           boss: { base: 'B', tr: 0, bpm: 162, bass: 'run16', drum: 'boss', arp: 'up' } },
+    fort: { kind: 'turret', fire: ['fan3'], col: ['#2b3245', '#56627f', '#d6a23a'] },
+    boss: 'argos' },
+  { name: '夕影の宙域', en: 'DUSK NEBULA',
+    theme: { bg: ['#0e0410', '#3a1230', '#160608'],
+             neb: [[120, 70, 150, '230,110,60', 0.28], [340, 180, 130, '170,50,120', 0.26], [250, 40, 90, '255,170,80', 0.14], [430, 130, 100, '120,40,140', 0.18]],
+             stars: ['#ffb08f', '#ffd8c8', '#fff4e0'], dens: 0.8,
+             floor: ['#6a3a3a', '#1a0808'], line: '#ffa070', line2: 'rgba(220,120,90,0.35)' },
+    ter: { hill: 1.1, cave: 0.9, f: 0.9, ph: 1.7, ceil: 0.6 },
+    mix: { wave: 6, straight: 2, aimer: 1, turret: 1 },
+    bgm: { main: { base: 'A', tr: -2, bpm: 140, bass: 'pulse', drum: 'half', arp: 'down' },
+           boss: { base: 'B', tr: -2, bpm: 158, bass: 'run16', drum: 'boss', arp: 'down' } },
+    fort: { kind: 'shutter', fire: ['aim', 'fan3'], col: ['#3a2838', '#7a5068', '#ff9a5a'] },
+    boss: 'garm' },
+  { name: '灼熱砂漠', en: 'BURNING DUNES',
+    theme: { bg: ['#1a0a02', '#4a2208', '#180a02'],
+             neb: [[100, 90, 150, '255,140,40', 0.24], [320, 170, 130, '200,70,20', 0.22], [220, 30, 80, '255,200,90', 0.14], [420, 110, 110, '160,60,20', 0.18]],
+             stars: ['#ffcf8f', '#ffe6b0', '#fff8e0'], dens: 0.55,
+             floor: ['#b07a30', '#2a1404'], line: '#ffd27a', line2: 'rgba(230,170,90,0.35)' },
+    ter: { hill: 1.2, cave: 0.95, f: 0.75, ph: 3.1, ceil: 0.3 },
+    mix: { wave: 2, straight: 1, aimer: 1, turret: 6 },
+    bgm: { main: { base: 'C', tr: 2, bpm: 156, bass: 'oct8', drum: 'four', arp: 'up' },
+           boss: { base: 'B', tr: 3, bpm: 166, bass: 'run16', drum: 'four', arp: 'wide' } },
+    fort: { kind: 'turret', fire: ['fan5'], col: ['#4a3420', '#8a6a40', '#ffcf5a'] },
+    boss: 'dune' },
+  { name: '深海プラント', en: 'ABYSSAL PLANT',
+    theme: { bg: ['#00060e', '#00283a', '#000c14'],
+             neb: [[120, 100, 160, '20,130,170', 0.28], [340, 200, 130, '10,70,130', 0.26], [240, 60, 90, '40,200,190', 0.14], [430, 140, 100, '20,90,160', 0.18]],
+             stars: ['#3fa8d8', '#8fe0ff', '#d0ffff'], dens: 1.25,
+             floor: ['#0e4a5a', '#021014'], line: '#4fe0ff', line2: 'rgba(60,180,210,0.35)' },
+    ter: { hill: 0.9, cave: 1.05, f: 1.15, ph: 0.6, ceil: 1.2 },
+    mix: { wave: 2, straight: 2, aimer: 4, turret: 2 },
+    bgm: { main: { base: 'A', tr: -3, bpm: 132, bass: 'walk', drum: 'half', arp: 'wide' },
+           boss: { base: 'B', tr: -4, bpm: 154, bass: 'pulse', drum: 'boss', arp: 'wide' } },
+    fort: { kind: 'shutter', fire: ['ring'], col: ['#183a48', '#3a7a90', '#6ff0ff'] },
+    boss: 'nereid' },
+  { name: '氷結回廊', en: 'FROZEN CORRIDOR',
+    theme: { bg: ['#050a16', '#18304e', '#081222'],
+             neb: [[110, 80, 150, '150,200,255', 0.22], [330, 190, 120, '200,230,255', 0.18], [230, 40, 90, '120,170,255', 0.14], [420, 120, 100, '220,240,255', 0.14]],
+             stars: ['#c8e8ff', '#eef8ff', '#ffffff'], dens: 1.6,
+             floor: ['#8ab8d8', '#16263a'], line: '#e8f8ff', line2: 'rgba(200,230,255,0.4)' },
+    ter: { hill: 1, cave: 1.05, f: 1.25, ph: 2.2, ceil: 1.4 },
+    mix: { wave: 2, straight: 5, aimer: 2, turret: 2 },
+    bgm: { main: { base: 'C', tr: 0, bpm: 146, bass: 'pulse', drum: 'main', arp: 'down', swap: true },
+           boss: { base: 'B', tr: 1, bpm: 164, bass: 'run16', drum: 'break', arp: 'down' } },
+    fort: { kind: 'turret', fire: ['aim', 'fan3'], col: ['#3a5068', '#8ab0cc', '#e0f6ff'] },
+    boss: 'gemini' },
+  { name: '電磁嵐域', en: 'ION STORM',
+    theme: { bg: ['#07001a', '#1e0a40', '#05000e'],
+             neb: [[120, 80, 140, '140,60,255', 0.30], [330, 190, 120, '60,200,255', 0.22], [230, 40, 90, '200,80,255', 0.18], [420, 120, 100, '80,120,255', 0.18]],
+             stars: ['#b08fff', '#e0c8ff', '#ffffff'], dens: 1.0,
+             floor: ['#3a2a6a', '#0a0618'], line: '#c08fff', line2: 'rgba(160,120,255,0.38)' },
+    ter: { hill: 0.95, cave: 1, f: 1.05, ph: 4.0, ceil: 1 },
+    mix: { wave: 3, straight: 1, aimer: 4, turret: 2 },
+    bgm: { main: { base: 'A', tr: 3, bpm: 164, bass: 'run16', drum: 'four', arp: 'up' },
+           boss: { base: 'B', tr: 5, bpm: 170, bass: 'oct8', drum: 'four', arp: 'up', swap: true } },
+    fort: { kind: 'shutter', fire: ['fan5', 'aim'], col: ['#2a2050', '#5a4aa0', '#c8a0ff'] },
+    boss: 'tesla' },
+  { name: '要塞都市', en: 'FORTRESS CITY',
+    theme: { bg: ['#08080c', '#1c1c28', '#06060a'],
+             neb: [[110, 80, 140, '120,120,150', 0.18], [330, 190, 120, '200,90,60', 0.16], [230, 40, 90, '150,150,180', 0.10], [420, 120, 100, '220,160,80', 0.12]],
+             stars: ['#9098a8', '#c8ccd8', '#ffe8a0'], dens: 0.7,
+             floor: ['#4a4a58', '#101016'], line: '#ffcc66', line2: 'rgba(220,180,90,0.35)' },
+    ter: { hill: 1.15, cave: 1.05, f: 1.4, ph: 5.1, ceil: 1.3 },
+    mix: { wave: 1, straight: 2, aimer: 3, turret: 6 },
+    bgm: { main: { base: 'C', tr: -3, bpm: 152, bass: 'oct8', drum: 'break', arp: 'wide' },
+           boss: { base: 'B', tr: -1, bpm: 168, bass: 'run16', drum: 'boss', arp: 'up', swap: true } },
+    fort: { kind: 'turret', fire: ['ring', 'fan5'], col: ['#3a3a46', '#7a7a8a', '#ffcc66'] },
+    boss: 'citadel' },
+  { name: '最終決戦圏', en: 'FINAL FRONTIER',
+    theme: { bg: ['#0e0004', '#2c0012', '#040002'],
+             neb: [[110, 80, 150, '220,30,60', 0.30], [330, 190, 130, '120,20,160', 0.26], [230, 40, 90, '255,80,60', 0.16], [420, 120, 100, '160,30,90', 0.18]],
+             stars: ['#ff8f9f', '#ffd0d8', '#ffffff'], dens: 1.3,
+             floor: ['#5a1020', '#140006'], line: '#ff6a80', line2: 'rgba(230,80,110,0.38)' },
+    ter: { hill: 1.1, cave: 1.05, f: 1.1, ph: 2.9, ceil: 1.2 },
+    mix: { wave: 3, straight: 3, aimer: 3, turret: 3 },
+    bgm: { main: { base: 'A', tr: 4, bpm: 170, bass: 'run16', drum: 'four', arp: 'down', swap: true },
+           boss: { base: 'B', tr: 2, bpm: 176, bass: 'run16', drum: 'break', arp: 'wide', swap: true } },
+    fort: { kind: 'shutter', fire: ['fan5', 'aim', 'ring'], col: ['#3a1018', '#7a3040', '#ff6a80'] },
+    boss: 'nemesis' }
+];
 
 // ============================================================
 //  入力（ゲームで使うキーはすべて preventDefault）
@@ -117,6 +228,8 @@ for (const ev of ['pointerdown', 'mousedown', 'click']) window.addEventListener(
 const PAUSE_TOGGLES = ['KeyP', 'Escape', 'GpStart', 'GpSelect', 'TouchPause'];
 function discardTouchMove() { touch.accX = touch.accY = touch.adjY = 0; }
 // 自動ポーズ（フォーカス喪失・パッド切断）の共通処理
+// away：フォーカスを失っている／裏に回っている間 true。クリア画面の自動遷移タイマーを止めるのに使う
+let away = false;
 function autoPause() {
   for (const k of PAUSE_TOGGLES) delete pressed[k];
   discardTouchMove();
@@ -129,16 +242,20 @@ function releaseAll() {
   gpRebase = true;
   autoPause();
 }
-window.addEventListener('blur', releaseAll);
+window.addEventListener('blur', () => { away = true; releaseAll(); });
 // フォーカス復帰後の最初のサンプルをゲームパッドの基準にする（押しっぱなしのSTARTを新規押下と見なさない）
-window.addEventListener('focus', () => { gpRebase = true; });
+window.addEventListener('focus', () => { away = false; gpRebase = true; });
+// 操作があればその画面を見ているとみなす（focus イベントが来ない環境で away が残り続けないように）
+for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => { away = false; }, { passive: true });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    away = true;
     releaseAll();
     // 裏に回ったら音も止める（BGMのスケジューラが間引かれて崩れないように）
     if (AC && AC.state === 'running') { const r = AC.suspend(); if (r && r.catch) r.catch(() => {}); }
   } else {
     gpRebase = true;
+    away = typeof document.hasFocus === 'function' ? !document.hasFocus() : false;
     if (AC && AC.state !== 'running' && AC.state !== 'closed') { const r = AC.resume(); if (r && r.catch) r.catch(() => {}); }
   }
 });
@@ -284,7 +401,7 @@ function pollGamepads() {
     const edge = i => !rebase && now[i] && !prev[i];
     let any = false;
     for (let i = 0; i < now.length; i++) if (edge(i)) { any = true; break; }
-    if (any) { initAudio(); touch.mode = false; }
+    if (any) { initAudio(); touch.mode = false; away = false; }
     if (edge(GP_BTN.A) || edge(GP_BTN.X)) pressed.GpShot = true;
     if (edge(GP_BTN.B) || edge(GP_BTN.Y)) pressed.GpPower = true;
     if (edge(GP_BTN.START)) pressed.GpStart = true;
@@ -408,8 +525,8 @@ function sfx(n) {
 // ============================================================
 //  BGM（WebAudioで合成するチップチューン風ループ。外部ファイルなし）
 //  16分音符単位のステップシーケンサ。AudioContext の時刻で少し先読みして予約する。
-//  ・通常曲 'main'（Aマイナー 150BPM・8小節：メロディ4小節＋アルペジオ4小節）
-//  ・ボス曲 'boss'（Dマイナー 162BPM・8小節：16分刻みのベースで緊張感）
+//  ・道中曲 'main1'〜'main8'／ボス曲 'boss1'〜'boss8'（ステージごとに旋律・移調・テンポ・ベース・ドラム・アルペジオを変える）
+//    旋律の素材は A（Aマイナー）、B（Dマイナーのボス曲）、C（Dマイナーの別旋律）の3種。各8小節：メロディ4小節＋アルペジオ4小節
 //  ・再生開始はスタート操作（newGame）以降。ゲームオーバー／クリア／ボス撃破演出で止め、
 //    リスタート・次の周回で頭から再開。ポーズ中は音量を絞る。M キーの消音で一緒に止まる。
 // ============================================================
@@ -418,7 +535,11 @@ const MV = { lead: 0.04, arp: 0.026, bass: 0.04, kick: 0.2, snare: 0.06, hat: 0.
 let musicBus = null, musicArmed = false, musicRestart = false;
 const music = { cur: null, node: null, echo: null, extra: null, step: 0, next: 0, duck: false, waves: null,
                 fading: [] };      // フェードアウト中の旧曲 { gain, nodes, timer }
-const ARP = [0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3];
+const ARPS = {
+  up:   [0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3],
+  down: [3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0],
+  wide: [0, 2, 1, 3, 0, 2, 1, 3, 3, 1, 2, 0, 3, 1, 2, 0]
+};
 function pulseWave(duty) {
   // デューティ比 duty の矩形波（ファミコン風のパルス波）をフーリエ級数で作る
   try {
@@ -428,55 +549,102 @@ function pulseWave(duty) {
   } catch (err) { return 'square'; }
 }
 // chords: [ベースの根音, 和音構成音×3]（MIDI番号）。mel: [ステップ, 音, 長さ(16分)]
+// tr: 移調（半音）, arp: アルペジオの型, swap: 旋律とアルペジオの小節を入れ替える
 function buildTrack(o) {
-  const len = o.bars * 16, lead = new Array(len);
-  for (const [s, m, l] of o.mel) lead[s] = [m, l, 'lead'];
-  for (let bar = o.melBars; bar < o.bars; bar++) {
-    const ch = o.chords[bar % o.chords.length], tones = [ch[1], ch[2], ch[3], ch[1] + 12];
-    for (let i = 0; i < 16; i++) lead[bar * 16 + i] = [tones[ARP[i]], 1, 'arp'];
+  const tr = o.tr || 0, len = o.bars * 16, lead = new Array(len), arp = ARPS[o.arp] || ARPS.up;
+  const melOff = o.swap ? (o.bars - o.melBars) * 16 : 0;
+  const chords = o.chords.map(c => c.map(m => m + tr));
+  for (const [s, m, l] of o.mel) lead[s + melOff] = [m + tr, l, 'lead'];
+  for (let bar = 0; bar < o.bars; bar++) {
+    if (bar * 16 >= melOff && bar * 16 < melOff + o.melBars * 16) continue;
+    const ch = chords[bar % chords.length], tones = [ch[1], ch[2], ch[3], ch[1] + 12];
+    for (let i = 0; i < 16; i++) lead[bar * 16 + i] = [tones[arp[i]], 1, 'arp'];
   }
-  return Object.assign({ len, lead }, o);
+  return Object.assign({}, o, { len, lead, chords });
 }
-const TRACKS = {
-  main: buildTrack({
-    bpm: 150, bars: 8, melBars: 4, bassLen: 1.6,
-    chords: [[45, 69, 72, 76], [41, 69, 72, 77], [43, 67, 71, 74], [40, 68, 71, 76]],   // Am F G E
-    mel: [
-      [0, 69, 2], [2, 72, 2], [4, 76, 2], [6, 81, 4], [10, 79, 2], [12, 76, 4],
-      [16, 77, 3], [19, 76, 1], [20, 72, 2], [22, 69, 2], [24, 72, 2], [26, 77, 2], [28, 76, 4],
-      [32, 67, 2], [34, 71, 2], [36, 74, 2], [38, 79, 4], [42, 77, 2], [44, 74, 4],
-      [48, 76, 2], [50, 80, 2], [52, 83, 4], [56, 80, 2], [58, 76, 2], [60, 71, 2], [62, 68, 2]
-    ],
-    // 8分音符で根音とオクターブ上を交互に刻む
-    bass: (s, ch) => (s % 2) ? null : ch[0] + ((s % 4) ? 12 : 0),
-    drum: (s) => {
-      const b = s % 16;
-      if (s >= 112 && b >= 13) return 'snare';            // 8小節目の終わりにフィル
-      if (b === 0 || b === 6 || b === 8) return 'kick';
-      if (b === 4 || b === 12) return 'snare';
-      return (b % 2 === 0) ? 'hat' : null;
-    }
-  }),
-  boss: buildTrack({
-    bpm: 162, bars: 8, melBars: 4, bassLen: 0.8,
-    chords: [[38, 62, 65, 69], [38, 62, 65, 69], [34, 62, 65, 70], [33, 61, 64, 69]],   // Dm Dm B♭ A
-    mel: [
-      [0, 81, 3], [3, 82, 1], [4, 81, 2], [6, 77, 2], [8, 74, 4], [12, 76, 2], [14, 77, 2],
-      [16, 79, 3], [19, 77, 1], [20, 76, 2], [22, 73, 2], [24, 74, 6], [30, 69, 2],
-      [32, 77, 3], [35, 79, 1], [36, 77, 2], [38, 74, 2], [40, 70, 4], [44, 74, 2], [46, 77, 2],
-      [48, 76, 4], [52, 73, 4], [56, 69, 2], [58, 73, 2], [60, 76, 2], [62, 79, 2]
-    ],
-    // 16分で根音を刻み、ところどころオクターブ上へ跳ねる
-    bass: (s, ch) => ch[0] + [0, 0, 12, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 12, 0, 12][s % 16],
-    drum: (s) => {
-      const b = s % 16;
-      if ((s % 64) >= 48 && b >= 13) return 'snare';
-      if (b === 4 || b === 12) return 'snare';            // b%4===0 より先に判定（裏拍のスネアを消さない）
-      if (b % 4 === 0) return 'kick';
-      return (b % 2) ? 'hat' : null;
-    }
-  })
+// 旋律の素材（A：通常曲 Aマイナー、B：ボス曲 Dマイナー、C：通常曲の別旋律 Dマイナー）
+const MELS = {
+  A: { melBars: 4,
+       chords: [[45, 69, 72, 76], [41, 69, 72, 77], [43, 67, 71, 74], [40, 68, 71, 76]],   // Am F G E
+       mel: [
+         [0, 69, 2], [2, 72, 2], [4, 76, 2], [6, 81, 4], [10, 79, 2], [12, 76, 4],
+         [16, 77, 3], [19, 76, 1], [20, 72, 2], [22, 69, 2], [24, 72, 2], [26, 77, 2], [28, 76, 4],
+         [32, 67, 2], [34, 71, 2], [36, 74, 2], [38, 79, 4], [42, 77, 2], [44, 74, 4],
+         [48, 76, 2], [50, 80, 2], [52, 83, 4], [56, 80, 2], [58, 76, 2], [60, 71, 2], [62, 68, 2]
+       ] },
+  B: { melBars: 4,
+       chords: [[38, 62, 65, 69], [38, 62, 65, 69], [34, 62, 65, 70], [33, 61, 64, 69]],   // Dm Dm B♭ A
+       mel: [
+         [0, 81, 3], [3, 82, 1], [4, 81, 2], [6, 77, 2], [8, 74, 4], [12, 76, 2], [14, 77, 2],
+         [16, 79, 3], [19, 77, 1], [20, 76, 2], [22, 73, 2], [24, 74, 6], [30, 69, 2],
+         [32, 77, 3], [35, 79, 1], [36, 77, 2], [38, 74, 2], [40, 70, 4], [44, 74, 2], [46, 77, 2],
+         [48, 76, 4], [52, 73, 4], [56, 69, 2], [58, 73, 2], [60, 76, 2], [62, 79, 2]
+       ] },
+  C: { melBars: 4,
+       chords: [[38, 62, 65, 69], [34, 62, 65, 70], [36, 60, 64, 67], [33, 61, 64, 69]],   // Dm B♭ C A
+       mel: [
+         [0, 74, 2], [2, 77, 2], [4, 81, 3], [7, 79, 1], [8, 77, 2], [10, 74, 2], [12, 76, 2], [14, 77, 2],
+         [16, 74, 3], [19, 70, 1], [20, 74, 2], [22, 77, 2], [24, 82, 4], [28, 81, 2], [30, 77, 2],
+         [32, 79, 3], [35, 76, 1], [36, 72, 2], [38, 76, 2], [40, 79, 4], [44, 84, 2], [46, 83, 2],
+         [48, 81, 4], [52, 76, 2], [54, 73, 2], [56, 76, 2], [58, 81, 2], [60, 85, 2], [62, 88, 2]
+       ] }
 };
+const BASS = {
+  oct8:  (s, ch) => (s % 2) ? null : ch[0] + ((s % 4) ? 12 : 0),                        // 8分で根音とオクターブ上を交互に
+  run16: (s, ch) => ch[0] + [0, 0, 12, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 12, 0, 12][s % 16],   // 16分刻み
+  pulse: (s, ch) => (s % 2) ? null : ch[0] + [0, 0, 7, 12][(s >> 1) % 4],               // 根音・5度・オクターブ
+  walk:  (s, ch) => (s % 4) ? null : ch[0] + [0, 7, 12, 7][(s >> 2) % 4]                // 4分でゆったり
+};
+const BASS_LEN = { oct8: 1.6, run16: 0.8, pulse: 1.6, walk: 3.4 };
+const DRUMS = {
+  main: s => {
+    const b = s % 16;
+    if (s >= 112 && b >= 13) return 'snare';            // 8小節目の終わりにフィル
+    if (b === 0 || b === 6 || b === 8) return 'kick';
+    if (b === 4 || b === 12) return 'snare';
+    return (b % 2 === 0) ? 'hat' : null;
+  },
+  boss: s => {
+    const b = s % 16;
+    if ((s % 64) >= 48 && b >= 13) return 'snare';
+    if (b === 4 || b === 12) return 'snare';            // b%4===0 より先に判定（裏拍のスネアを消さない）
+    if (b % 4 === 0) return 'kick';
+    return (b % 2) ? 'hat' : null;
+  },
+  four: s => {                                          // 4つ打ち風
+    const b = s % 16;
+    if (s >= 112 && b >= 12) return 'snare';
+    if (b === 4 || b === 12) return 'snare';
+    if (b % 4 === 0) return 'kick';
+    return (b % 4 === 2) ? 'hat' : null;
+  },
+  half: s => {                                          // ハーフテンポ（ゆったり）
+    const b = s % 16;
+    if (s >= 112 && b >= 14) return 'snare';
+    if (b === 0 || b === 10) return 'kick';
+    if (b === 8) return 'snare';
+    return (b % 2 === 0) ? 'hat' : null;
+  },
+  break: s => {                                         // ブレイクビーツ風
+    const b = s % 16;
+    if ((s % 64) >= 56 && b >= 12) return 'snare';
+    return ['kick', null, 'hat', 'kick', 'snare', null, 'hat', null, null, 'kick', 'hat', null, 'snare', null, 'hat', 'hat'][b];
+  }
+};
+// ステージごとの曲：'main1'〜'main8'（道中）, 'boss1'〜'boss8'（ボス戦）
+// 調（主音）と型（素材/ベース/ドラム/アルペジオ/入替）は16曲で重複しないよう STAGES の bgm で割り当てている
+//   道中：1 Am / 2 Gm / 3 Em / 4 F#m / 5 Dm / 6 Cm / 7 Bm / 8 C#m（8曲とも別の調）
+//   ボス：1 Dm / 2 Cm / 3 Fm / 4 B♭m / 5 E♭m / 6 Gm / 7 C#m / 8 Em（8曲とも別の調・ベース/ドラム/アルペジオ/入替の組も全て別）
+const TRACKS = {};
+STAGES.forEach((S, i) => {
+  for (const kind of ['main', 'boss']) {
+    const m = S.bgm[kind], base = MELS[m.base];
+    TRACKS[kind + (i + 1)] = buildTrack(Object.assign({}, base, {
+      bpm: m.bpm, bars: 8, tr: m.tr, arp: m.arp, swap: !!m.swap,
+      bass: BASS[m.bass], bassLen: BASS_LEN[m.bass], drum: DRUMS[m.drum]
+    }));
+  }
+});
 const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
 function mOsc(dests, kind, midi, t, dur, vol) {
   const o = AC.createOscillator(), g = AC.createGain();
@@ -571,7 +739,10 @@ function musicSchedule() {
 function musicUpdate() {
   if (!AC || !musicBus || AC.state !== 'running') return;
   let want = null;
-  if (musicArmed && !muted && state === 'play') want = boss ? (boss.state === 'dying' ? null : 'boss') : 'main';
+  if (musicArmed && !muted && state === 'play' && G) {
+    const st = clamp(G.stage || 1, 1, STAGES.length);
+    want = boss ? (boss.state === 'dying' ? null : 'boss' + st) : 'main' + st;
+  }
   if (musicRestart) { musicRestart = false; if (want) musicStart(want); }
   if (want !== music.cur) {
     if (want) musicStart(want);
@@ -595,7 +766,6 @@ const starLayers = [
   { n: 45, sp: 0.60, s: 1.5, a: 0.75, c: '#d2e2ff', pts: [] },
   { n: 22, sp: 1.50, s: 2.2, a: 1.00, c: '#ffffff', pts: [] },
 ];
-for (const L of starLayers) for (let i = 0; i < L.n; i++) L.pts.push({ x: rand(0, W), y: rand(0, H) });
 function updateStars() {
   const m = (state === 'play' && G) ? 0.45 + 0.55 * (G.scrollSpeed / BASE_SCROLL) : 1;
   for (const L of starLayers) for (const p of L.pts) {
@@ -605,41 +775,63 @@ function updateStars() {
 }
 const neb = document.createElement('canvas');
 neb.width = W / 2; neb.height = H / 2;
-(() => {
+function paintNebula(blobs) {
   const nc = neb.getContext('2d');
   if (!nc) return;   // 星雲は装飾なので、取得できなければ描かないだけにする
-  const blobs = [[110, 80, 140, '90,40,170', 0.30], [330, 190, 120, '20,90,180', 0.26],
-                 [230, 40, 90, '170,40,130', 0.16], [420, 120, 100, '40,150,170', 0.16]];
+  if (nc.clearRect) nc.clearRect(0, 0, W / 2, H / 2);
   for (const [bx, by, br, rgb, a] of blobs) for (const off of [-W / 2, 0, W / 2]) {
     const g = nc.createRadialGradient(bx + off, by, 0, bx + off, by, br);
     g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(1, `rgba(${rgb},0)`);
     nc.fillStyle = g; nc.fillRect(0, 0, W / 2, H / 2);
   }
-})();
+}
 let nebX = 0;
-const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-bgGrad.addColorStop(0, '#02030c'); bgGrad.addColorStop(0.5, '#090a24'); bgGrad.addColorStop(1, '#040410');
-const floorGrad = ctx.createLinearGradient(0, H - 180, 0, H);
-floorGrad.addColorStop(0, '#1f5c52'); floorGrad.addColorStop(1, '#061616');
-const ceilGrad = ctx.createLinearGradient(0, 0, 0, 180);
-ceilGrad.addColorStop(0, '#061616'); ceilGrad.addColorStop(1, '#1f5c52');
+let bgGrad = null, floorGrad = null, ceilGrad = null, terLine = '#72e6c0', terLine2 = 'rgba(70,170,150,0.35)';
+let TER = STAGES[0].ter;          // 現在のステージの地形パラメータ
+let themeStage = 0;
+// ステージのテーマ（背景・星雲・星・地形の色、地形の起伏）を読み替える
+function applyTheme(st) {
+  if (themeStage === st) return;
+  themeStage = st;
+  const S = STAGES[st - 1], T = S.theme;
+  bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+  bgGrad.addColorStop(0, T.bg[0]); bgGrad.addColorStop(0.5, T.bg[1]); bgGrad.addColorStop(1, T.bg[2]);
+  floorGrad = ctx.createLinearGradient(0, H - 180, 0, H);
+  floorGrad.addColorStop(0, T.floor[0]); floorGrad.addColorStop(1, T.floor[1]);
+  ceilGrad = ctx.createLinearGradient(0, 0, 0, 180);
+  ceilGrad.addColorStop(0, T.floor[1]); ceilGrad.addColorStop(1, T.floor[0]);
+  terLine = T.line; terLine2 = T.line2;
+  TER = S.ter;
+  paintNebula(T.neb);
+  starLayers.forEach((L, i) => {
+    L.c = T.stars[i];
+    const n = Math.round(L.n * T.dens);
+    L.pts.length = 0;
+    for (let k = 0; k < n; k++) L.pts.push({ x: rand(0, W), y: rand(0, H) });
+  });
+}
+applyTheme(1);
 
 // ============================================================
 //  地形（上下の起伏。ワールドX → 高さ）
 // ============================================================
 function band(x, a, b, f) { if (x <= a || x >= b) return 0; return Math.min(1, (x - a) / f, (b - x) / f); }
+// 区間の配置（丘陵 1300〜3750／要塞の平地 3450〜5450／洞窟 5200〜8800）は全ステージ共通。
+// 起伏の高さ・周波数・位相はステージの TER で変える（要塞の平地は高さ固定）
 function floorH(wx) {
   if (wx < 1300 || wx > 8800) return 0;
-  const hills = band(wx, 1300, 3750, 300) * (52 + 38 * Math.sin(wx * 0.0052) + 22 * Math.sin(wx * 0.0131 + 1.3));
+  const T = TER, f = T.f, ph = T.ph;
+  const hills = band(wx, 1300, 3750, 300) * T.hill * (52 + 38 * Math.sin(wx * 0.0052 * f + ph) + 22 * Math.sin(wx * 0.0131 * f + 1.3 + ph));
   const flat  = band(wx, 3450, 5450, 220) * 70;
-  const cave  = band(wx, 5200, 8800, 320) * (88 + 55 * Math.sin(wx * 0.0047) + 24 * Math.sin(wx * 0.017 + 2.1));
+  const cave  = band(wx, 5200, 8800, 320) * T.cave * (88 + 55 * Math.sin(wx * 0.0047 * f + ph) + 24 * Math.sin(wx * 0.017 * f + 2.1 + ph));
   return Math.max(hills, flat, cave, 0);
 }
 function ceilH(wx) {
   if (wx < 1300 || wx > 8800) return 0;
-  const hills = band(wx, 1300, 3750, 300) * (18 + 14 * Math.sin(wx * 0.0071 + 0.4));
+  const T = TER, f = T.f, ph = T.ph;
+  const hills = band(wx, 1300, 3750, 300) * T.ceil * (18 + 14 * Math.sin(wx * 0.0071 * f + 0.4 + ph));
   const flat  = band(wx, 3450, 5450, 220) * 26;
-  const cave  = band(wx, 5200, 8800, 320) * (88 + 55 * Math.sin(wx * 0.0047 + 2.6) + 24 * Math.sin(wx * 0.0133 + 0.7));
+  const cave  = band(wx, 5200, 8800, 320) * T.cave * (88 + 55 * Math.sin(wx * 0.0047 * f + 2.6 + ph) + 24 * Math.sin(wx * 0.0133 * f + 0.7 + ph));
   return Math.max(hills, flat, cave, 0);
 }
 const groundY = sx => H - floorH(sx + G.scrollX);
@@ -660,19 +852,26 @@ function saveHi() {
 }
 
 let G = null, P = null;
-const enemies = [], ebul = [], pbul = [], caps = [], parts = [], rings = [], texts = [];
+const enemies = [], ebul = [], pbul = [], caps = [], parts = [], rings = [], texts = [], fireworks = [];
 let groups = {}, groupSeq = 0;
 let fort = null, boss = null, banner = null, shake = 0;
 
-function makeDiff(L) {
+// 難易度：周回 L（大きく上がる）とステージ st（少しずつ上がる）の両方で決める
+function makeDiff(L, st) {
+  const s = (st || 1) - 1;
   return {
-    bs: Math.min(1 + 0.22 * (L - 1), 2),        // 敵弾速度
-    fr: Math.min(1 + 0.4 * (L - 1), 2.6),       // 発射頻度
-    hp: 1 + 0.35 * (L - 1),                     // 耐久
-    revenge: L >= 2 ? Math.min(0.3 * (L - 1), 0.75) : 0   // 撃ち返し確率
+    bs: Math.min(1 + 0.22 * (L - 1) + 0.035 * s, 2.2),      // 敵弾速度
+    fr: Math.min(1 + 0.4 * (L - 1) + 0.06 * s, 2.9),        // 発射頻度
+    hp: 1 + 0.35 * (L - 1) + 0.07 * s,                       // 耐久
+    revenge: L >= 2 ? Math.min(0.3 * (L - 1) + 0.03 * s, 0.8)   // 撃ち返し確率（1周目もステージ5から少し）
+                    : (s >= 4 ? 0.06 * (s - 3) : 0),
+    spd: 1 + 0.04 * s,                                        // 雑魚の移動速度
+    gap: Math.max(0.72, 1 - 0.035 * s)                        // 出現間隔（小さいほど密）
   };
 }
 const D = () => G.d;
+const stageDef = () => STAGES[clamp(G.stage, 1, STAGES.length) - 1];
+const bossK = () => 1 + 0.06 * (G.stage - 1);                 // 中ボス・ボスの耐久の追加倍率
 
 function makePlayer() {
   const p = { x: 110, y: H / 2, px: 110, py: H / 2, alive: true, inv: 120, respawnT: 0, speedLv: 0, missile: false, double: false,
@@ -683,32 +882,48 @@ function makePlayer() {
 function resetTrail(p) { p.trail.length = 0; for (let i = 0; i < OPT_GAP * 2 + 2; i++) p.trail.push({ x: p.x, y: p.y }); }
 
 function newGame() {
-  G = { score: 0, lives: 3, loop: 1, nextExtend: 30000, scrollX: 0, scrollSpeed: BASE_SCROLL,
-        events: [], evIdx: 0, t: 0, d: makeDiff(1), bonus: 0 };
+  // ポーズ中の R などで G を置き換える前に、今回のスコアをハイスコアとして保存しておく
+  if (G) saveHi();
+  // hiAtStart：このプレイ開始時点のハイスコア（「ハイスコア更新！」はこれを超えた時だけ出す）
+  G = { score: 0, lives: 3, loop: 1, stage: 1, nextExtend: 30000, scrollX: 0, scrollSpeed: BASE_SCROLL,
+        events: [], evIdx: 0, t: 0, d: makeDiff(1, 1), bonus: 0, allBonus: 0, final: false, lastBoss: '', hiAtStart: hiScore };
   P = makePlayer();
-  parts.length = 0; rings.length = 0; texts.length = 0;
-  startLoop();
+  parts.length = 0; rings.length = 0; texts.length = 0; fireworks.length = 0;
+  startStage();
   state = 'play'; paused = false;
   // BGM はスタート操作以降に解禁し、リスタートのたびに頭から流す
   musicArmed = true; musicRestart = true;
   touch.accX = touch.accY = touch.adjY = 0;
 }
-function startLoop() {
-  G.scrollX = 0; G.scrollSpeed = BASE_SCROLL; G.events = buildStage(); G.evIdx = 0; G.t = 0; G.d = makeDiff(G.loop);
-  enemies.length = 0; ebul.length = 0; pbul.length = 0; caps.length = 0;
+// ステージ開始：スクロール位置・出現イベント・敵・弾・中ボス/ボスをすべて初期化してから読み替える
+function startStage() {
+  G.d = makeDiff(G.loop, G.stage);
+  applyTheme(G.stage);
+  G.scrollX = 0; G.scrollSpeed = BASE_SCROLL; G.events = buildStage(G.stage); G.evIdx = 0; G.t = 0;
+  G.final = false; G.bonus = 0; G.allBonus = 0;
+  enemies.length = 0; ebul.length = 0; pbul.length = 0; caps.length = 0; fireworks.length = 0;
   groups = {}; fort = null; boss = null;
   P.alive = true; P.respawnT = 0;
-  P.x = 110; P.y = H / 2; P.inv = Math.max(P.inv, 120);
+  P.x = 110; P.y = H / 2; P.px = P.x; P.py = P.y; P.inv = Math.max(P.inv, 120);
+  // 発射間隔の残りは持ち越さない（クリア画面中は減らないため、次面の初弾がずれる）。装備・ゲージは引き継ぐ
+  P.shotCd = 0; P.missileCd = 0;
   resetTrail(P);
-  banner = { text: `第${G.loop}周 出撃`, sub: G.loop > 1 ? '敵の攻撃が激しくなった！' : '', t: 160 };
+  const S = stageDef();
+  banner = { text: `STAGE ${G.stage}　${S.name}`, sub: G.loop > 1 ? `第${G.loop}周 ─ 敵の攻撃が激しくなった！` : S.en, t: 190 };
 }
-function nextLoop() { G.loop++; startLoop(); state = 'play'; musicRestart = true; touch.accX = touch.accY = touch.adjY = 0; }
-function toGameOver() { state = 'gameover'; stateT = 0; saveHi(); }
-function toClear() {
+function resumePlay() { state = 'play'; musicRestart = true; touch.accX = touch.accY = touch.adjY = 0; }
+function nextStage() { G.stage++; startStage(); resumePlay(); }
+// 8ステージ目クリア後：2周目以降はステージ1から（周回の難易度上昇を適用）
+function nextLoop() { G.loop++; G.stage = 1; startStage(); resumePlay(); }
+function toGameOver() { state = 'gameover'; stateT = 0; banner = null; saveHi(); }   // 古いバナーはゲームオーバー画面に残さない
+function toClear(bossName) {
   // 最後の自機と相打ちでもボス撃破が先ならクリア優先（updatePlayer がゲームオーバーを保留している）
-  G.bonus = Math.max(0, G.lives) * 3000 * G.loop;
-  addScore(G.bonus);
-  if (G.lives <= 0) G.lives = 1;   // 失った機体を補充し、次の周回は最後の1機から始める
+  G.lastBoss = bossName || '';
+  G.final = G.stage >= STAGES.length;
+  G.bonus = (G.stage * 2000 + Math.max(0, G.lives) * 1500) * G.loop;
+  G.allBonus = G.final ? 50000 * G.loop : 0;
+  addScore(G.bonus + G.allBonus);
+  if (G.lives <= 0) G.lives = 1;   // 失った機体を補充し、次のステージは最後の1機から始める
   state = 'clear'; stateT = 0; saveHi();
   sfx('fanfare');
 }
@@ -725,56 +940,91 @@ function addText(x, y, str, color) { texts.push({ x, y, str, color, t: 60, dead:
 // ============================================================
 //  ステージ構成（スクロール位置で出現）
 // ============================================================
-function buildStage() {
+// ステージの敵配置を、ステージの編成の重み（mix）から種つき乱数で組み立てる（毎回同じ配置になる）。
+// 区間構成は全ステージ共通：開けた宙域 → 丘陵 → 要塞（中ボス）→ 洞窟 → ボス
+function buildStage(st) {
+  const S = STAGES[st - 1], R = seeded(st * 7919 + 101), mix = S.mix, gap = D().gap;
   const ev = [];
-  const A = (at, type, o) => ev.push(Object.assign({ at, type }, o || {}));
-  // 区間A：開けた宇宙空間
-  A(80, 'wave', { y: 150, amp: 55 });
-  A(300, 'wave', { y: 390, amp: 55 });
-  A(520, 'straight', { ys: [110, 200, 290], red: 1 });
-  A(700, 'wave', { y: 270, amp: 130 });
-  A(860, 'aimer', { y: 150 });
-  A(960, 'wave', { y: 400, amp: 40 });
-  A(1100, 'straight', { ys: [330, 420] });
-  A(1180, 'aimer', { y: 420 });
-  // 区間B：起伏のある丘陵
-  let i = 0;
-  for (let at = 1300; at <= 2900; at += 200, i++) {
-    switch (i % 4) {
-      case 0: A(at, 'turret', { side: 'floor' }); A(at + 60, 'wave', { y: 180, amp: 60 }); break;
-      case 1: A(at, 'turret', { side: 'floor' }); A(at + 40, 'straight', { ys: [150, 250], red: 1 }); break;
-      case 2: A(at, 'turret', { side: 'ceil' }); A(at + 80, 'aimer', { y: 200 }); break;
-      case 3: A(at, 'turret', { side: 'floor' }); A(at + 50, 'wave', { y: 260, amp: 90 }); break;
+  const A = (at, type, o) => ev.push(Object.assign({ at: Math.round(at), type }, o || {}));
+  const pick = allowTurret => {
+    let sum = 0;
+    for (const k in mix) if (allowTurret || k !== 'turret') sum += mix[k];
+    let r = R() * sum;
+    for (const k in mix) {
+      if (!allowTurret && k === 'turret') continue;
+      if ((r -= mix[k]) < 0) return k;
     }
+    return 'wave';
+  };
+  // 空中の敵（mid=true なら洞窟の隙間の中央を通る）
+  const air = (at, type, mid, lo = 100, hi = 400, red) => {
+    const yy = () => Math.round(lo + R() * (hi - lo));
+    switch (type) {
+      case 'wave':
+        if (mid) A(at, 'wave', { y: 'mid', amp: Math.round(35 + R() * 20) });
+        else { const y = yy(); A(at, 'wave', { y, amp: Math.round(Math.min(40 + R() * 90, y - 60, H - 60 - y)) }); }
+        break;
+      case 'straight': {
+        const ys = [];
+        if (mid) { ys.push('mid'); if (R() < 0.4) ys.push('mid'); }
+        else {
+          const n = 2 + (R() * 3 | 0), y0 = yy();
+          for (let k = 0; k < n; k++) ys.push(Math.round(clamp(y0 + (k - (n - 1) / 2) * 80, Math.max(70, lo - 30), Math.min(H - 70, hi + 30))));
+        }
+        A(at, 'straight', { ys, red: red || R() < 0.45 ? 1 : 0 });
+        break;
+      }
+      case 'aimer': A(at, 'aimer', { y: mid ? 'mid' : yy() }); break;
+    }
+  };
+  // 区間A：開けた宇宙空間（砲台なし）
+  for (let at = 80; at <= 1200; at += 150 * gap * (0.8 + R() * 0.4)) air(at, pick(false), false);
+  A(520, 'straight', { ys: [110, 200, 290], red: 1 });          // 序盤のカプセル補給は必ず用意
+  // 区間B：起伏のある丘陵
+  const tShare = mix.turret / (mix.wave + mix.straight + mix.aimer + mix.turret);
+  let i = 0;
+  for (let at = 1300; at <= 2900; at += 200 * gap, i++) {
+    const t = pick(true);
+    if (t === 'turret') {
+      A(at, 'turret', { side: S.ter.ceil > 0.5 && R() < 0.3 ? 'ceil' : 'floor' });
+      if (R() < tShare) A(at + 70, 'turret', { side: 'floor' });
+      air(at + 50, pick(false), false, 100, 330);
+    } else {
+      air(at, t, false, 100, 330);
+      if (R() < tShare + 0.15) A(at + 70, 'turret', { side: 'floor' });
+    }
+    if (i % 4 === 1) air(at + 110, 'straight', false, 110, 300, true);
   }
-  A(3050, 'wave', { y: 150, amp: 50 });
-  A(3150, 'straight', { ys: [100, 180, 260, 340] });
-  A(3250, 'aimer', { y: 300 });
-  // 中盤：地上要塞
+  air(3050, pick(false), false);
+  air(3150, pick(false), false);
+  air(3250, pick(false), false);
+  // 中盤：地上要塞（中ボス）
   A(FORT_WX - W - 20, 'fortress');
   A(3420, 'wave', { y: 140, amp: 40 });
   // 区間D：洞窟（天井・地面の砲台）
   i = 0;
-  for (let at = 4250; at <= 7700; at += 180, i++) {
-    switch (i % 5) {
-      case 0: A(at, 'turret', { side: 'floor' }); A(at + 20, 'turret', { side: 'ceil' }); break;
-      case 1: A(at, 'wave', { y: 'mid', amp: 50 }); break;
-      case 2: A(at, 'turret', { side: 'floor' }); A(at + 60, 'aimer', { y: 'mid' }); break;
-      case 3: A(at, 'turret', { side: 'ceil' }); A(at + 40, 'straight', { ys: ['mid'], red: 1 }); break;
-      case 4: A(at, 'wave', { y: 'mid', amp: 40 }); A(at + 90, 'turret', { side: 'floor' }); break;
+  for (let at = 4250; at <= 7700; at += 180 * gap, i++) {
+    const t = pick(true);
+    if (t === 'turret') {
+      A(at, 'turret', { side: R() < 0.5 ? 'floor' : 'ceil' });
+      if (R() < 0.6) A(at + 20, 'turret', { side: R() < 0.5 ? 'floor' : 'ceil' });
+    } else {
+      air(at, t, true);
+      if (R() < tShare) A(at + 90, 'turret', { side: R() < 0.5 ? 'floor' : 'ceil' });
     }
+    if (i % 5 === 3) A(at + 40, 'straight', { ys: ['mid'], red: 1 });
   }
-  A(7900, 'wave', { y: 180, amp: 60 });
-  A(8100, 'wave', { y: 360, amp: 60 });
+  air(7900, pick(false), false, 150, 380);
+  air(8100, pick(false), false, 150, 380);
   A(8300, 'straight', { ys: [150, 270, 390], red: 1 });
-  // 最後：大型戦艦
+  // 最後：ステージボス
   A(BOSS_AT, 'boss');
   ev.sort((a, b) => a.at - b.at);
   return ev;
 }
 
 function makeStraight(x, y, follow, red) {
-  return { type: 'straight', x, y, follow, vx: -(3.8 + 0.3 * (G.loop - 1)), hp: 1, r: 11, score: 120,
+  return { type: 'straight', x, y, follow, vx: -(3.8 * D().spd + 0.3 * (G.loop - 1)), hp: 1, r: 11, score: 120,
            red: !!red, capsule: !!red, t: 0, flash: 0, cx: x, cy: y, dead: false };
 }
 function makeTurret(side, x, mount) {
@@ -791,7 +1041,7 @@ function spawnEvent(e) {
       const follow = e.y === 'mid';
       for (let k = 0; k < 5; k++) {
         enemies.push({ type: 'wave', x: W + 30 + k * 44, y: -100, baseY: follow ? 0 : e.y, follow, amp: e.amp,
-                       vx: -2.7 - 0.15 * (G.loop - 1), hp: 1, r: 12, score: 100, group: id, t: k * 7, flash: 0,
+                       vx: -2.7 * d.spd - 0.15 * (G.loop - 1), hp: 1, r: 12, score: 100, group: id, t: k * 7, flash: 0,
                        cx: 0, cy: 0, dead: false });
       }
       break;
@@ -947,12 +1197,26 @@ function updatePlayer() {
   if (P.inv > 0) P.inv--;
   if (P.shieldFlash > 0) P.shieldFlash--;
   if (pressed.KeyX || pressed.GpPower || pressed.TouchPower) activatePower();
-  P.shotCd--; P.missileCd--;
+  if (P.shotCd > 0) P.shotCd--;
+  if (P.missileCd > 0) P.missileCd--;
   // 固定更新の間に押して離した短押しも拾う（コントローラーは GpShot、短いタップは TouchShot）。タッチ中は自動連射
   if (keys.KeyZ || keys.Space || gpad.shot || pressed.KeyZ || pressed.Space || pressed.GpShot || pressed.TouchShot ||
       touch.dragId !== null) fireWeapons();
   // 地形接触はミス（点滅無敵中は除く）
   if (touchesTerrain(P.x, P.y)) { killPlayer(); return; }
+}
+// ---- 武器バランス ----
+const SHOT_CD = 7;          // 通常弾（＋ダブル）の発射間隔（フレーム）。押し続けている限り、この間隔で撃ち続ける
+const LASER_CD = 4, LASER_V = 17, LASER_LEN = 70;   // 4F毎×17px=68px間隔 < 長さ70px なので途切れない一本のビームに見える
+const LASER_H = 5;          // レーザーの当たり判定の高さ（描画の芯もこの幅）
+const LASER_HIT_IV = 10;    // 同じ対象へのレーザーの再ヒット間隔（フレーム。発射元＝自機／オプションごと）
+const LASER_CORE_MUL = 0.5; // ボス・中ボスのコアへのレーザーダメージ倍率（甲殻越しの減衰ダメージにも掛かる）
+// レーザーがこの対象にダメージを入れてよいか。入れてよければ最終ヒット時刻（G.t）を記録する
+function laserReady(b, t) {
+  const lz = t.lzT || (t.lzT = []), last = lz[b.src];
+  if (last !== undefined && G.t >= last && G.t - last < LASER_HIT_IV) return false;
+  lz[b.src] = G.t;
+  return true;
 }
 function countOf(kind, src) { let c = 0; for (const b of pbul) if (!b.dead && b.kind === kind && b.src === src) c++; return c; }
 function fireWeapons() {
@@ -960,18 +1224,17 @@ function fireWeapons() {
   for (let i = 0; i < P.options; i++) { const o = optPos(i); srcs.push([o.x + 8, o.y]); }
   if (P.laser) {
     if (P.shotCd <= 0) {
-      P.shotCd = 4;
-      // 4フレーム毎×17px=68px間隔なので長さ70pxで途切れない一本のビームに見える
-      srcs.forEach((s, i) => pbul.push({ kind: 'laser', x: s[0] + 70, y: s[1], vx: 17, vy: 0, len: 70, src: i, hit: new Set(), dmg: 1, dead: false }));
+      P.shotCd = LASER_CD;
+      srcs.forEach((s, i) => pbul.push({ kind: 'laser', x: s[0] + LASER_LEN, y: s[1], vx: LASER_V, vy: 0, len: LASER_LEN, src: i, dmg: 1, dead: false }));
       sfx('laser');
     }
   } else if (P.shotCd <= 0) {
-    let fired = false;
+    // 同時存在数の上限は設けない（以前は発射元ごとに通常弾3発・ダブル2発までで、画面端に消えるまで次が出ず途切れていた）
     srcs.forEach((s, i) => {
-      if (countOf('shot', i) < 3) { pbul.push({ kind: 'shot', x: s[0], y: s[1], vx: 13, vy: 0, src: i, dmg: 1, dead: false }); fired = true; }
-      if (P.double && countOf('dbl', i) < 2) { pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false }); fired = true; }
+      pbul.push({ kind: 'shot', x: s[0], y: s[1], vx: 13, vy: 0, src: i, dmg: 1, dead: false });
+      if (P.double) pbul.push({ kind: 'dbl', x: s[0] - 4, y: s[1] - 3, vx: 9.2, vy: -9.2, src: i, dmg: 1, dead: false });
     });
-    if (fired) { P.shotCd = 6; sfx('shot'); }
+    P.shotCd = SHOT_CD; sfx('shot');
   }
   if (P.missile && P.missileCd <= 0) {
     let f = false;
@@ -1038,8 +1301,8 @@ function hitEnemies(b) {
   for (const e of enemies) {
     if (e.dead) continue;
     if (isL) {
-      if (b.hit.has(e)) continue;
-      if (circRect(e.cx, e.cy, e.r, b.x - b.len, b.y - 6, b.len, 12)) { b.hit.add(e); damageEnemy(e, b.dmg); }
+      // 貫通：当たっても弾は消えない。同じ敵へは LASER_HIT_IV フレームに1回だけダメージ
+      if (circRect(e.cx, e.cy, e.r, b.x - b.len, b.y - LASER_H / 2, b.len, LASER_H) && laserReady(b, e)) damageEnemy(e, b.dmg);
     } else {
       const dx = e.cx - b.x, dy = e.cy - b.y, rr = e.r + br;
       if (dx * dx + dy * dy < rr * rr) { damageEnemy(e, b.dmg); b.dead = true; return; }
@@ -1051,8 +1314,11 @@ function damageEnemy(e, dmg) {
   e.hp -= dmg; e.flash = 3;
   if (e.hp <= 0) killEnemy(e); else sfx('hit');
 }
-function killEnemy(e) {
+// noRevenge=true：ボス撃破の道連れなど、撃ち返し弾を出さない撃破
+function killEnemy(e, noRevenge) {
   e.dead = true;
+  // 封印型要塞の砲台：撃破数で封印解除を判定する（画面外へ出た砲台は数えない）
+  if (e.mount && fort && e.mount.obj === fort && fort.state === 'alive') fortTurretDown(fort);
   addScore(e.score);
   explode(e.cx, e.cy, e.type === 'aimer' ? 2 : 1);
   if (e.capsule) dropCap(e.cx, e.cy);
@@ -1062,7 +1328,7 @@ function killEnemy(e) {
   }
   // 2周目以降は撃ち返し弾
   const d = D();
-  if (d.revenge > 0 && P.alive && Math.random() < d.revenge && Math.hypot(P.x - e.cx, P.y - e.cy) > 110) aimShot(e.cx, e.cy, 3);
+  if (!noRevenge && d.revenge > 0 && P.alive && Math.random() < d.revenge && Math.hypot(P.x - e.cx, P.y - e.cy) > 110) aimShot(e.cx, e.cy, 3);
 }
 
 // ============================================================
@@ -1134,65 +1400,212 @@ function updateEnemies() {
 }
 
 // ============================================================
-//  構造物（要塞・ボス）共通：防壁プレート → コア → 装甲
+//  構造物（要塞・ボス）共通
+//   body    : 船体の矩形 [dx,dy,w,h]。弾を弾く（hullDmg があればコアへ減衰ダメージを通す）
+//   plates  : 壊せる装甲板 {dx,dy,w,h,hp,max,flash}。弾を遮る
+//   cores   : 弱点 {dx,dy,r,hp,max,flash,guard,gk,hidden,shutter,open,rage}
+//             guard=true の間はダメージ無効。gk は理由（'lock' 封印 / 'shut' 閉鎖 / 'barrier' バリア / 'move' 移動中）
+//             hidden=true は本体に隠れていて当たらない。shutter=true は開閉扉つき（open: 0 閉〜1 開）
+//   devices : バリア発生装置などの小さな壊せる部位 {dx,dy,r,hp,max,flash,dead,prog}
+//   判定順：装置 → 装甲板 → コア → 船体
+//   s.core は常に cores[0]（互換用）。全コアの hp が 0 になったら s.onDestroy()
 // ============================================================
+function mkCore(dx, dy, r, hp, o) {
+  const h = Math.max(1, Math.round(hp));
+  return Object.assign({ dx, dy, r, hp: h, max: h, flash: 0, deny: 0, guard: false, gk: '', hidden: false,
+                         shutter: false, open: 1, rage: false, label: '' }, o || {});
+}
+function liveCores(s) { let n = 0; for (const c of s.cores) if (c.hp > 0) n++; return n; }
+function livePlates(s) { let n = 0; for (const p of s.plates) if (p.hp > 0) n++; return n; }
+function liveDevices(s) { let n = 0; for (const v of s.devices) if (!v.dead) n++; return n; }
+function coreHitR(c) { return c.r + (c.guard && c.gk === 'barrier' ? 16 : 0); }
+// 開閉サイクル：閉 closed → 開く tr → 開 open → 閉じる tr。0（閉）〜1（開）を返す
+function shutterOpen(t, closed, open, tr) {
+  const p = t % (closed + open + tr * 2);
+  if (p < closed) return 0;
+  if (p < closed + tr) return (p - closed) / tr;
+  if (p < closed + tr + open) return 1;
+  return 1 - (p - closed - tr - open) / tr;
+}
+function damageCore(s, c, dmg, quiet) {
+  if (c.hp <= 0) return;
+  c.hp -= dmg;
+  if (!quiet) c.flash = 3;
+  if (c.hp <= 0) {
+    c.hp = 0; s.lastCore = c;
+    if (liveCores(s) === 0) { s.onDestroy(); return; }
+    if (s.onCoreDown) s.onCoreDown(c);
+  } else if (!quiet) sfx('hit');
+  if (s.onHit) s.onHit(c);
+}
 function hitStruct(s, b) {
   let x0, y0, w, h;
-  if (b.kind === 'laser') { x0 = b.x - b.len; y0 = b.y - 5; w = b.len; h = 10; }
+  // レーザーは構造物を貫通せず当たった時点で消える（従来どおり）。
+  // ダメージは部位ごとに LASER_HIT_IV フレームに1回だけ。間隔内に当たった分は無音で吸収される
+  const isL = b.kind === 'laser';
+  if (isL) { x0 = b.x - b.len; y0 = b.y - LASER_H / 2; w = b.len; h = LASER_H; }
   else { x0 = b.x - 5; y0 = b.y - 4; w = 10; h = 8; }
   const ox = s.x, oy = s.oy;
-  for (const p of s.plates) {
-    if (p.hp <= 0) continue;
-    if (rectRect(x0, y0, w, h, ox + p.dx, oy + s.plateY, s.plateW, s.plateH)) {
-      p.hp -= b.dmg; p.flash = 3;
-      if (p.hp <= 0) { explode(ox + p.dx + 4, oy + s.plateY + s.plateH / 2, 1); addScore(200); }
-      else sfx('tink');
-      return true;
-    }
+  // ボス登場中（'enter'）は全部位（装置・装甲・コア・船体）が無敵。弾は当たって弾かれるだけ。
+  // 弱点の仕掛け（開閉・移動・公転など）は 'fight' に入ってから動くので、その前に削ってギミックを飛ばせないようにする
+  const inert = s.state === 'enter';
+  const deflect = col => { spark(b.x, b.y, col || '#c8cce0'); sfx('tink'); return true; };
+  for (const v of s.devices) {
+    if (v.dead || !circRect(ox + v.dx, oy + v.dy, v.r, x0, y0, w, h)) continue;
+    if (inert) return deflect('#9ff6ff');
+    if (isL && !laserReady(b, v)) return true;
+    v.hp -= b.dmg; v.flash = 3;
+    if (v.hp <= 0) {
+      v.hp = 0; v.dead = true; v.respT = 0;
+      // 加点は装置ごとに初回の破壊だけ（復活した装置の再破壊は0点。撃破演出とバリア解除は毎回）
+      explode(ox + v.dx, oy + v.dy, 2);
+      if (!v.scored) { v.scored = true; addScore(500); }
+      if (s.onDeviceDown) s.onDeviceDown(v);
+      if (s.syncGuard) s.syncGuard();   // 全装置破壊ならバリアをその場で解除（同じ更新の後続弾から通る）
+    } else sfx('hit');
+    return true;
   }
-  const c = s.core;
-  if (c.hp > 0 && circRect(ox + c.dx, oy + c.dy, c.r, x0, y0, w, h)) {
-    c.hp -= b.dmg; c.flash = 3; sfx('hit');
-    if (c.hp <= 0) s.onDestroy();
+  for (const p of s.plates) {
+    if (p.hp <= 0 || !rectRect(x0, y0, w, h, ox + p.dx, oy + p.dy, p.w, p.h)) continue;
+    if (inert) return deflect();
+    if (isL && !laserReady(b, p)) return true;
+    p.hp -= b.dmg; p.flash = 3;
+    if (p.hp <= 0) {
+      explode(ox + p.dx + p.w / 2, oy + p.dy + p.h / 2, 1); addScore(s.plateScore || 200);
+      if (s.onPlateDown) s.onPlateDown(p);
+      if (s.syncGuard) s.syncGuard();   // 全装甲破壊なら封印をその場で解除（同じ更新の後続弾から通る）
+    } else sfx('tink');
+    return true;
+  }
+  for (const c of s.cores) {
+    if (c.hp <= 0 || c.hidden || !circRect(ox + c.dx, oy + c.dy, coreHitR(c), x0, y0, w, h)) continue;
+    if (inert) { c.deny = 6; return deflect(c.gk === 'barrier' ? '#9ff6ff' : '#c8cce0'); }
+    // 閉じている／装甲・バリアで守られている間は、レーザーも含めて従来どおり無効
+    if (c.guard) { spark(b.x, b.y, c.gk === 'barrier' ? '#9ff6ff' : '#c8cce0'); sfx('tink'); c.deny = 6; }
+    else if (!isL) damageCore(s, c, b.dmg);
+    else if (laserReady(b, c)) damageCore(s, c, b.dmg * LASER_CORE_MUL);
     return true;
   }
   for (const r of s.body) {
-    if (rectRect(x0, y0, w, h, ox + r[0], oy + r[1], r[2], r[3])) { spark(b.x, b.y); sfx('tink'); return true; }
+    if (!rectRect(x0, y0, w, h, ox + r[0], oy + r[1], r[2], r[3])) continue;
+    if (inert) return deflect();
+    if (s.hullDmg) {
+      // 本体（甲殻）への攻撃：コアへ大幅減衰したダメージだけ通す（レーザーはさらに再ヒット間隔と減衰倍率が掛かる）
+      const c = s.cores.find(k => k.hp > 0 && !k.guard);
+      if (isL && c && !laserReady(b, c)) return true;
+      s.hullFlash = 3; spark(b.x, b.y, '#ffcf9a'); sfx('tink');
+      if (c) damageCore(s, c, b.dmg * s.hullDmg * (isL ? LASER_CORE_MUL : 1), true);
+    } else { spark(b.x, b.y); sfx('tink'); }
+    return true;
   }
   return false;
 }
 function structHitsPlayer(s, x = P.x, y = P.y) {
   const px = x - 12, py = y - 6, pw = 28, ph = 12;
   for (const r of s.body) if (rectRect(px, py, pw, ph, s.x + r[0], s.oy + r[1], r[2], r[3])) return true;
-  for (const p of s.plates) if (p.hp > 0 && rectRect(px, py, pw, ph, s.x + p.dx, s.oy + s.plateY, s.plateW, s.plateH)) return true;
-  const c = s.core;
-  return c.hp > 0 && circRect(s.x + c.dx, s.oy + c.dy, c.r, px, py, pw, ph);
+  for (const p of s.plates) if (p.hp > 0 && rectRect(px, py, pw, ph, s.x + p.dx, s.oy + p.dy, p.w, p.h)) return true;
+  for (const v of s.devices) if (!v.dead && circRect(s.x + v.dx, s.oy + v.dy, v.r, px, py, pw, ph)) return true;
+  for (const c of s.cores) if (c.hp > 0 && !c.hidden && circRect(s.x + c.dx, s.oy + c.dy, c.r, px, py, pw, ph)) return true;
+  return false;
+}
+function tickStructFlash(s) {
+  for (const c of s.cores) { if (c.flash > 0) c.flash--; if (c.deny > 0) c.deny--; }
+  for (const p of s.plates) if (p.flash > 0) p.flash--;
+  for (const v of s.devices) if (v.flash > 0) v.flash--;
+  if (s.hullFlash > 0) s.hullFlash--;
+}
+// 弾幕の部品
+function fan(x, y, n, spread, ang, spd) { for (let k = 0; k < n; k++) eShot(x, y, ang + (k - (n - 1) / 2) * spread, spd * D().bs); }
+function ring(x, y, n, spd, off) { const o = off === undefined ? Math.random() * TAU : off; for (let k = 0; k < n; k++) eShot(x, y, o + k * TAU / n, spd * D().bs); }
+function angTo(x, y) { return P.alive ? Math.atan2(P.y - y, P.x - x) : Math.PI; }
+// 攻撃タイマー：period（発射頻度で短縮）ごとに true。first は最初の待ち
+function every(o, key, period, first) {
+  if (o.T[key] === undefined) o.T[key] = first !== undefined ? first : period;
+  if (--o.T[key] > 0) return false;
+  o.T[key] = Math.max(6, Math.round(period / D().fr));
+  return true;
+}
+// コアの移動（なめらかに from → to）
+// 移動開始の時点で即座に無敵（gk='move'）にする。onHit（被弾処理の中）から呼ばれても、同じ更新の後続弾は通らない
+function startMove(b, c, to, dur) { b.from = [c.dx, c.dy]; b.to = to; b.moveT = b.moveDur = dur; c.guard = true; c.gk = 'move'; }
+function stepMove(b, c) {
+  if (!(b.moveT > 0)) return false;
+  b.moveT--;
+  const t = 1 - b.moveT / b.moveDur, e = t * t * (3 - 2 * t);
+  c.dx = b.from[0] + (b.to[0] - b.from[0]) * e;
+  c.dy = b.from[1] + (b.to[1] - b.from[1]) * e;
+  return true;
 }
 
 // ---------- 地上要塞 ----------
+// 中ボス。ステージ定義の fort.kind で弱点が変わる
+//  'turret' : 二段階攻略。①上部の砲台3基をすべて撃破するとコアの封印が解ける
+//             ②コア正面の防壁プレート3枚が弾を遮るので、壊してからコアを撃つ（プレートは封印中に先に壊してもよい）
+//             封印解除は砲台の「撃破数」で判定する（時間切れで画面外へ流れた砲台は数えない）
+//  'shutter': コアの前のシャッターが周期的に開閉し、開いている間だけダメージが通る
 function spawnFort() {
-  const d = D(), gy = H - floorH(FORT_WX + 150);
+  const d = D(), fc = stageDef().fort, k = bossK(), gy = H - floorH(FORT_WX + 150);
+  const tk = fc.kind === 'turret';
   fort = {
     wx: FORT_WX, x: FORT_WX - G.scrollX, gy, oy: gy, state: 'alive', lock: 0, released: false, dieT: 0,
-    spawnT: 90, spawnN: 0, fireT: 100,
+    spawnT: 90, spawnN: 0, fireT: 100, fireN: 0, cyc: 0, kind: fc.kind, fire: fc.fire, col: fc.col,
+    turretsLeft: 3, turretsTotal: 0, turretsKilled: 0, unsealed: false, name: '要塞', T: {},
     body: [[0, -45, 70, 45], [0, -150, 70, 45], [70, -150, 230, 150], [110, -210, 140, 60]],
-    plates: [{ dx: 8, hp: 0, flash: 0 }, { dx: 26, hp: 0, flash: 0 }, { dx: 44, hp: 0, flash: 0 }],
-    plateY: -105, plateW: 9, plateH: 60,
-    core: { dx: 64, dy: -75, r: 15, hp: Math.round(24 * d.hp), max: 0, flash: 0 },
-    onDestroy: destroyFort
+    plates: tk ? [8, 26, 44].map(dx => { const hp = Math.round(4 * d.hp); return { dx, dy: -105, w: 9, h: 60, hp, max: hp, flash: 0 }; }) : [],
+    cores: [mkCore(64, -75, 15, 24 * d.hp * k, { guard: true, gk: tk ? 'lock' : 'shut', shutter: !tk, open: 0 })],
+    devices: [],
+    onDestroy: destroyFort,
+    // 封印解除後に最後の防壁プレートを壊したら、コアが撃てるようになったことを知らせる
+    onPlateDown() { if (fort && fort.unsealed && !livePlates(fort)) { banner = { text: 'コア露出', sub: 'コアを撃て！', t: 110 }; sfx('power'); } }
   };
-  fort.plates.forEach(p => { p.hp = Math.round(4 * d.hp); });
-  fort.core.max = fort.core.hp;
-  for (const [dx, dy] of [[140, -210], [220, -210], [290, -150]]) enemies.push(makeTurret('floor', 0, { obj: fort, dx, dy }));
-  banner = { text: '要塞接近', sub: '防壁を破り、奥のコアを撃て', t: 170, warn: true };
+  fort.core = fort.cores[0];
+  // 封印型は砲台を撃ちやすい位置（要塞の上面・前面の上）に置き、少し硬くする
+  const tp = tk ? [[40, -150], [128, -210], [236, -210]] : [[140, -210], [220, -210], [290, -150]];
+  for (const [dx, dy] of tp) {
+    const t = makeTurret('floor', 0, { obj: fort, dx, dy });
+    if (tk) { t.hp = Math.round(5 * d.hp); t.score = 500; }
+    enemies.push(t);
+  }
+  fort.turretsTotal = fort.turretsLeft = tp.length;
+  banner = { text: '要塞接近', sub: tk ? '砲台を全て壊して封印を解き、防壁プレートを壊してコアを撃て' : 'シャッターが開いた瞬間にコアを撃て', t: 170, warn: true };
   sfx('warn');
 }
+// 封印型：砲台の撃破数から封印状態をその場で決める（同じ更新の後続弾にもすぐ反映される）
+function fortSeal(f) {
+  if (f.kind !== 'turret') return;
+  const c = f.core;
+  f.turretsLeft = Math.max(0, f.turretsTotal - f.turretsKilled);
+  c.guard = f.turretsLeft > 0; c.open = c.guard ? 0 : 1;
+  if (!c.guard && !f.unsealed) {
+    f.unsealed = true;
+    const n = livePlates(f);
+    banner = { text: '封印解除！', sub: n ? `防壁プレート（残り${n}枚）を壊してコアを狙え` : 'コアを撃て！', t: 130 };
+    sfx('power');
+  }
+}
+function fortTurretDown(f) {
+  if (f.kind !== 'turret') return;
+  f.turretsKilled++;
+  fortSeal(f);
+}
+function fortFire(f, kind) {
+  switch (kind) {
+    case 'fan3': fan(f.x - 6, f.gy - 75, 3, 0.3, Math.PI, 2.8); break;
+    case 'fan5': fan(f.x - 6, f.gy - 75, 5, 0.22, Math.PI, 2.7); break;
+    case 'aim': if (P.alive) for (let k = -1; k <= 1; k++) aimShot(f.x + 180, f.gy - 214, 3.1, k * 0.14); break;
+    case 'ring': for (let k = 0; k < 9; k++) eShot(f.x + 180, f.gy - 214, Math.PI * (0.82 + k * 0.08), 2.4 * D().bs); break;
+  }
+}
 function updateFort() {
-  const f = fort, d = D();
+  const f = fort, d = D(), c = f.core;
   f.x = f.wx - G.scrollX;
-  if (f.core.flash > 0) f.core.flash--;
-  for (const p of f.plates) if (p.flash > 0) p.flash--;
+  tickStructFlash(f);
   if (f.state === 'alive') {
+    if (f.kind === 'shutter') {
+      if (f.x < W - 40) f.cyc++;
+      c.open = shutterOpen(f.cyc, Math.max(90, 150 - 8 * (G.stage - 1)), 110, 20);
+      c.guard = c.open < 0.75;
+    } else fortSeal(f);
     if (f.x <= 600 && !f.released) {
       // スクロール停止中：上空から増援
       if (++f.lock > 1800) { f.released = true; banner = { text: '要塞を通過', sub: '', t: 90 }; }
@@ -1204,7 +1617,7 @@ function updateFort() {
     }
     if (f.x < W - 30 && --f.fireT <= 0) {
       f.fireT = Math.round(110 / d.fr);
-      for (let k = -1; k <= 1; k++) eShot(f.x - 6, f.gy - 75, Math.PI + k * 0.3, 2.8 * d.bs);
+      fortFire(f, f.fire[f.fireN++ % f.fire.length]);
       sfx('eshot');
     }
     if (P.alive && structHitsPlayer(f)) killPlayer();
@@ -1220,79 +1633,375 @@ function updateFort() {
 function destroyFort() {
   const f = fort;
   f.state = 'dying'; f.dieT = 96;
-  addScore(10000);
+  const pts = 10000 + 1000 * (G.stage - 1);
+  addScore(pts);
   explode(f.x + f.core.dx, f.gy + f.core.dy, 3);
   for (const e of enemies) if (e.mount && e.mount.obj === f && !e.dead) killEnemy(e);
   dropCap(f.x + f.core.dx - 40, f.gy - 75);
-  banner = { text: '要塞撃破！', sub: '+10000', t: 140 };
+  banner = { text: '要塞撃破！', sub: '+' + pts, t: 140 };
   shake = 14;
 }
 
-// ---------- ボス：大型戦艦 ----------
+// ---------- ステージボス（8種・それぞれ弱点の仕掛けが違う） ----------
+//  共通：右から登場 → 上下にゆっくり揺れながら戦う。def.update が弱点の状態（guard 等）と攻撃を毎フレーム更新する。
+//  amp: 上下の振れ幅, yOff: 揺れの中心のずれ, tx: 停止位置X, hint: 登場時の攻略ヒント
+const BOSSES = {
+  // 1. コア開閉：艦首通路の奥のコアを装甲扉が周期的に開閉。開いている間だけダメージが通る
+  argos: {
+    name: '巨大戦艦アルゴス', hint: '装甲扉が開いた瞬間にコアを撃て', amp: 150,
+    pal: ['#33285a', '#8f7bd6', '#1a1430', '#ffd36b'],
+    init(b, d, k) {
+      b.body = [[-100, -38, 240, 76], [-50, -72, 160, 34], [-50, 38, 160, 34], [-165, -58, 65, 34], [-165, 24, 65, 34],
+                [140, -62, 36, 42], [140, 20, 36, 42]];
+      b.cores = [mkCore(-100, 0, 18, 40 * d.hp * k, { shutter: true, open: 0, guard: true, gk: 'shut' })];
+    },
+    update(b) {
+      const c = b.core;
+      c.open = shutterOpen(b.ft, 130, 120, 18);
+      c.guard = c.open < 0.7; c.gk = 'shut';
+      const rage = c.hp < c.max * 0.5;
+      if (every(b, 'fan', rage ? 70 : 90, 90)) {            // 艦首から扇状弾
+        const n = G.loop >= 2 ? 7 : 5;
+        for (const s of [-41, 41]) fan(b.x - 165, b.y + s, n, 0.17, Math.PI + (s < 0 ? -0.08 : 0.08), 2.8);
+        sfx('eshot');
+      }
+      if (every(b, 'aim', 150, 160)) { b.burst = 3; b.burstT = 0; }
+      if (b.burst > 0 && --b.burstT <= 0) {                   // 甲板砲から狙い撃ち
+        b.burst--; b.burstT = 8;
+        aimShot(b.x + 30, b.y - 78, 3.6); aimShot(b.x + 30, b.y + 78, 3.6);
+      }
+      if (rage && every(b, 'ring', 200, 240)) ring(b.x - 60, b.y, 12 + 2 * (G.loop - 1), 2.2);   // 怒り時：全方位弾
+    },
+    status(b) { return b.core.guard ? ['装甲扉 閉鎖中 ─ 開くのを待て', '#aab4d0'] : ['コア開放中！ 今だ！', '#7fffd0']; }
+  },
+  // 2. 装甲プレート：4枚の装甲プレートを全て壊すまでコアは封印
+  garm: {
+    name: '装甲空母ガルム', hint: '装甲プレート4枚を全て壊せ', amp: 140,
+    pal: ['#5a3a48', '#c08aa0', '#2a1820', '#ffb070'],
+    init(b, d, k) {
+      b.body = [[-150, -30, 300, 60], [20, -72, 80, 42], [-100, 30, 190, 28], [150, -44, 34, 88]];
+      const ph = Math.max(1, Math.round(7 * d.hp * k));
+      b.plates = [[-166, -30, 12, 24], [-166, 6, 12, 24], [4, -72, 12, 40], [-116, 32, 12, 26]]
+        .map(([dx, dy, w, h]) => ({ dx, dy, w, h, hp: ph, max: ph, flash: 0 }));
+      b.plateScore = 500;
+      b.cores = [mkCore(-150, 0, 14, 36 * d.hp * k, { guard: true, gk: 'lock' })];
+    },
+    // 防御状態の再計算（毎更新に加え、装甲板が壊れた瞬間にも hitStruct から呼ばれる）
+    guard(b) {
+      const c = b.core, n = livePlates(b);
+      c.guard = n > 0; c.gk = 'lock';
+      if (!n && !b.unsealed) { b.unsealed = true; banner = { text: '装甲全損', sub: 'コアが露出した！', t: 120 }; sfx('power'); }
+    },
+    update(b) {
+      BOSSES.garm.guard(b);
+      const rage = b.unsealed;
+      if (every(b, 'launch', rage ? 120 : 170, 60) && enemies.length < 16) {   // 艦載機の発進
+        for (const [ox, oy] of [[40, -90], [-40, 76]]) {
+          const e = makeStraight(b.x + ox, clamp(b.y + oy, 50, H - 50), false, false);
+          e.vx *= 0.8; e.minion = true; enemies.push(e);
+        }
+      }
+      if (every(b, 'aim', 130, 100)) { b.burst = rage ? 4 : 2; b.burstT = 0; }
+      if (b.burst > 0 && --b.burstT <= 0) { b.burst--; b.burstT = 9; aimShot(b.x + 30, b.y - 74, 3.4); sfx('eshot'); }
+      if (every(b, 'fan', rage ? 80 : 120, 140)) fan(b.x - 168, b.y, rage ? 5 : 3, 0.2, Math.PI, 2.7);
+    },
+    status(b) { const n = livePlates(b); return n ? [`封印中：装甲プレート 残り ${n}/4`, '#ffd27a'] : ['コア露出！ 撃ち込め！', '#7fffd0']; }
+  },
+  // 3. 部位ダメージ減衰：甲殻への攻撃はダメージ1/8。口の奥の赤いコアは通常ダメージ
+  dune: {
+    name: '砂塵甲殻艦デューンクラブ', hint: '甲殻へのダメージは1/8。赤いコアを狙え', amp: 140,
+    pal: ['#8a6a3a', '#e0b878', '#4a3418', '#ffcf7a'],
+    init(b, d, k) {
+      b.body = [[-90, -62, 180, 124], [-165, -72, 75, 30], [-165, 42, 75, 30], [90, -44, 56, 88], [-60, -80, 120, 18], [-60, 62, 120, 18]];
+      b.hullDmg = 1 / 8;
+      b.cores = [mkCore(-102, 0, 13, 44 * d.hp * k, { col: '#ff4a4a', glow: '255,70,60' })];
+      b.sweep = 0; b.clawSide = 1;
+    },
+    update(b, d) {
+      const c = b.core, rage = c.hp < c.max * 0.5;
+      b.sweep += rage ? 0.05 : 0.035;
+      if (every(b, 'sweep', rage ? 9 : 12, 60)) eShot(b.x - 112, b.y, Math.PI + Math.sin(b.sweep) * 0.75, 2.6 * d.bs);   // 首振り連射
+      if (every(b, 'claw', 100, 80)) {                       // 左右のハサミから交互に狙い撃ち
+        b.clawSide = -b.clawSide;
+        const x = b.x - 165, y = b.y + b.clawSide * 57;
+        fan(x, y, 3, 0.12, angTo(x, y), 3.2); sfx('eshot');
+      }
+      if (every(b, 'sand', rage ? 170 : 240, 200)) ring(b.x + 20, b.y, 10 + 2 * (G.loop - 1), 1.8);   // 砂塵弾
+    },
+    status() { return ['甲殻へのダメージは1/8 ─ 口の奥の赤いコアを狙え', '#ffcf9a']; }
+  },
+  // 4. フェーズ変化：HP 2/3・1/3 でコアが別の位置へ移動し、攻撃パターンも変わる（3フェーズ）
+  nereid: {
+    name: '深海機動母艦ネレイド', hint: 'HPが減るとコアが移動し攻撃が変わる', amp: 120,
+    pal: ['#1a4a6a', '#5fb8e0', '#0a2030', '#6ff0ff'],
+    init(b, d, k) {
+      b.body = [[-120, -40, 240, 80], [-30, -92, 96, 52], [-30, 40, 96, 52], [120, -26, 52, 52]];
+      b.sockets = [[-134, 0], [-46, -70], [-46, 70]];
+      b.cores = [mkCore(-134, 0, 16, 54 * d.hp * k)];
+      b.phase = 1; b.spin = 0;
+    },
+    onHit(b, c) {
+      const r = c.hp / c.max, want = r > 2 / 3 ? 1 : r > 1 / 3 ? 2 : 3;
+      if (want > b.phase) {
+        b.phase = want; startMove(b, c, b.sockets[want - 1], 70);
+        banner = { text: `フェーズ${want}`, sub: 'コアが移動した！ 攻撃パターン変化', t: 130, warn: true }; sfx('warn');
+      }
+    },
+    update(b, d) {
+      const c = b.core;
+      if (stepMove(b, c)) { c.guard = true; c.gk = 'move'; return; }   // 移動中は無敵で攻撃も止まる
+      c.guard = false;
+      const cx = b.x + c.dx, cy = b.y + c.dy;
+      if (b.phase === 1) {
+        if (every(b, 'aim', 110, 70)) { b.burst = 3; b.burstT = 0; }
+        if (every(b, 'fan', 130, 120)) { fan(b.x - 120, b.y - 30, 5, 0.2, Math.PI - 0.1, 2.6); fan(b.x - 120, b.y + 30, 5, 0.2, Math.PI + 0.1, 2.6); sfx('eshot'); }
+      } else if (b.phase === 2) {
+        b.mvSp = 1.3; b.spin += 0.31;
+        if (every(b, 'spiral', 9, 30)) { eShot(cx, cy, b.spin, 2.3 * d.bs); eShot(cx, cy, b.spin + Math.PI, 2.3 * d.bs); }
+        if (every(b, 'aim2', 150, 90)) { b.burst = 2; b.burstT = 0; }
+      } else {
+        b.mvSp = 1.6;
+        if (every(b, 'ring', 110, 50)) ring(cx, cy, 14 + 2 * (G.loop - 1), 2.3);
+        if (every(b, 'aim3', 90, 40)) { b.burst = 4; b.burstT = 0; }
+        if (every(b, 'fan3', 150, 100)) fan(b.x - 120, b.y, 7, 0.16, Math.PI, 2.9);
+      }
+      if (b.burst > 0 && --b.burstT <= 0) { b.burst--; b.burstT = 8; aimShot(cx, cy, 3.5); sfx('eshot'); }
+    },
+    status(b) { return [`フェーズ ${b.phase}/3` + (b.moveT > 0 ? ' ─ コア移動中' : ' ─ 光るソケットのコアを狙え'), b.moveT > 0 ? '#aab4d0' : '#9fe8ff']; }
+  },
+  // 5. 双子コア：左右2つのコアを両方壊すと撃破。片方を壊すと残りが暴走（弾幕増加）
+  gemini: {
+    name: '双子氷晶艦ジェミニ', hint: '左右2つのコアを両方破壊せよ', amp: 140, yOff: 13,
+    pal: ['#6a9cc8', '#e0f4ff', '#2a4a70', '#ffffff'],
+    init(b, d, k) {
+      b.body = [[-70, -34, 160, 68], [-140, 20, 72, 46], [38, -92, 96, 46], [90, -20, 60, 40], [-20, 34, 70, 22]];
+      const hp = 26 * d.hp * k;
+      b.cores = [mkCore(-152, 42, 15, hp, { label: '左' }), mkCore(24, -69, 15, hp, { label: '右' })];
+    },
+    onCoreDown(b, c) {
+      explode(b.x + c.dx, b.y + c.dy, 3); addScore(5000);
+      for (const o of b.cores) if (o.hp > 0) o.rage = true;
+      b.enraged = true;
+      banner = { text: `${c.label}コア破壊！`, sub: '残りのコアが暴走する！', t: 140, warn: true }; sfx('warn');
+    },
+    update(b) {
+      const [L, R] = b.cores, rg = !!b.enraged;
+      if (L.hp > 0) {
+        const x = b.x + L.dx, y = b.y + L.dy;
+        if (every(b, 'L', rg ? 60 : 105, 60)) { fan(x, y, rg ? 5 : 3, 0.16, angTo(x, y), 3.1); sfx('eshot'); }
+        if (rg && every(b, 'Lr', 150, 90)) ring(x, y, 12 + 2 * (G.loop - 1), 2.2);
+      }
+      if (R.hp > 0) {
+        const x = b.x + R.dx, y = b.y + R.dy;
+        if (every(b, 'R', rg ? 70 : 125, 100)) { fan(x, y, rg ? 7 : 5, 0.2, Math.PI - 0.3, 2.6); sfx('eshot'); }
+        if (rg && every(b, 'Rr', 150, 30)) ring(x, y, 12 + 2 * (G.loop - 1), 2.2);
+      }
+      if (rg) b.mvSp = 1.35;
+      if (every(b, 'ice', 200, 160)) fan(b.x - 70, b.y, 3, 0.5, Math.PI, 1.9);   // ゆっくり進む氷塊
+    },
+    status(b) {
+      return liveCores(b) === 2 ? ['コア 残り 2/2 ─ 片方を壊すと残りが暴走する', '#bfe8ff'] : ['コア 残り 1/2 ─ 暴走中！', '#ff8a9a'];
+    }
+  },
+  // 6. バリア発生装置：上下2基の装置がバリアを張る。装置を全部壊すとバリア消失（8秒で復活）
+  tesla: {
+    name: '電磁要塞テスラ', hint: '上下のバリア装置を先に壊せ', amp: 100,
+    pal: ['#3a2a6a', '#a68aff', '#1a1030', '#c8a0ff'],
+    init(b, d, k) {
+      b.body = [[-72, -56, 150, 112], [78, -36, 52, 72], [-40, -100, 22, 44], [-40, 56, 22, 44]];
+      const dh = Math.max(1, Math.round(9 * d.hp * k));
+      b.devices = [[-29, -112], [-29, 112]].map(([dx, dy]) => ({ dx, dy, r: 12, hp: dh, max: dh, flash: 0, dead: false, respT: 0, prog: 0 }));
+      b.cores = [mkCore(-86, 0, 17, 40 * d.hp * k, { guard: true, gk: 'barrier' })];
+      b.spin = 0; b.downT = 0;
+    },
+    onDeviceDown(b) {
+      if (!liveDevices(b)) { b.downT = 0; banner = { text: 'バリア消失', sub: '今のうちにコアを撃て！', t: 110 }; sfx('power'); }
+    },
+    // 防御状態の再計算（毎更新に加え、装置が壊れた瞬間にも hitStruct から呼ばれる）
+    guard(b) { const c = b.core; c.guard = liveDevices(b) > 0; c.gk = 'barrier'; },
+    update(b, d) {
+      const c = b.core, DOWN = 480, RESP = 600;
+      if (!liveDevices(b)) {
+        b.downT++;
+        for (const v of b.devices) v.prog = b.downT / DOWN;
+        if (b.downT >= DOWN) {
+          for (const v of b.devices) { v.dead = false; v.hp = v.max; v.respT = 0; v.flash = 6; }
+          banner = { text: 'バリア再展開', sub: '装置が復活した', t: 100, warn: true }; sfx('warn');
+        }
+      } else {
+        for (const v of b.devices) {
+          if (!v.dead) continue;
+          v.prog = ++v.respT / RESP;
+          if (v.respT >= RESP) { v.dead = false; v.hp = v.max; v.respT = 0; v.flash = 6; }
+        }
+      }
+      BOSSES.tesla.guard(b);
+      const cx = b.x + c.dx, cy = b.y + c.dy;
+      if (c.guard) {
+        b.spin += 0.23;
+        if (every(b, 'spiral', 10, 40)) { eShot(cx, cy, b.spin, 2.2 * d.bs); eShot(cx, cy, b.spin + Math.PI, 2.2 * d.bs); }
+        b.devices.forEach((v, i) => {
+          if (!v.dead && every(b, 'dev' + i, 140, 60 + i * 70)) { aimShot(b.x + v.dx, b.y + v.dy, 3.2); sfx('eshot'); }
+        });
+      } else if (every(b, 'panic', 60, 30)) { fan(cx, cy, 5, 0.18, angTo(cx, cy), 3.2); sfx('eshot'); }
+    },
+    status(b) {
+      const n = liveDevices(b);
+      return n ? [`バリア展開中：装置 残り ${n}/2`, '#9ff6ff'] : [`バリア消失！ 復活まで ${Math.max(0, Math.ceil((480 - b.downT) / 60))}秒`, '#7fffd0'];
+    }
+  },
+  // 7. 公転コア：コアが本体の周りを回り続ける。右側（奥）に回ると本体に引っ込んで当たらない
+  citadel: {
+    name: '機動要塞シタデル', hint: '周回するコアが手前に来た時を狙え', amp: 100,
+    pal: ['#4a4a58', '#a8a8b8', '#202028', '#ffcc66'],
+    init(b, d, k) {
+      b.body = [[-70, -70, 140, 140], [-96, -16, 26, 32], [70, -44, 40, 88], [-40, -90, 80, 20], [-40, 70, 80, 20]];
+      b.cores = [mkCore(-118, 0, 15, 40 * d.hp * k)];
+      b.th = Math.PI; b.dir = 1; b.orbR = 118; b.turnT = 300;
+    },
+    update(b) {
+      const c = b.core, rage = c.hp < c.max * 0.5;
+      if (--b.turnT <= 0) { b.turnT = Math.round(rand(220, 380)); b.dir = -b.dir; }   // ときどき逆回転
+      b.th += (0.016 + (rage ? 0.008 : 0) + 0.001 * (G.stage - 1)) * b.dir;
+      const cs = Math.cos(b.th), want = cs < 0.2 ? 118 : 24;
+      b.orbR += (want - b.orbR) * 0.12;
+      c.dx = b.orbR * cs; c.dy = b.orbR * Math.sin(b.th) * 0.85;
+      c.hidden = b.orbR < 92; c.guard = false;
+      const cx = b.x + c.dx, cy = b.y + c.dy;
+      if (!c.hidden && every(b, 'core', rage ? 34 : 48, 30)) { aimShot(cx, cy, 3.3); sfx('eshot'); }
+      if (every(b, 'ring', rage ? 120 : 170, 120)) ring(b.x, b.y, 12 + 2 * (G.loop - 1), 2.1);
+      if (every(b, 'spike', 130, 80)) fan(b.x - 96, b.y, 3, 0.25, Math.PI, 2.8);
+    },
+    status(b) { return b.core.hidden ? ['コアは本体の奥に隠れている', '#aab4d0'] : ['コア露出中 ─ 狙え！', '#7fffd0']; }
+  },
+  // 8. 最終ボス：装甲プレート → コア開閉 → （HP45%で）コア移動＋開閉高速化 の複合ギミック
+  nemesis: {
+    name: '最終決戦艦ネメシス', hint: '装甲 → 開閉 → 移動。全ての仕掛けを突破せよ', amp: 100, final: true,
+    pal: ['#4a1020', '#d05070', '#200008', '#ff6a80'],
+    init(b, d, k) {
+      b.body = [[-110, -55, 240, 110], [-40, -110, 150, 55], [-40, 55, 150, 55], [-170, -32, 60, 64], [130, -80, 50, 160]];
+      const ph = Math.max(1, Math.round(10 * d.hp * k));
+      b.plates = [[-214, -30, 11, 60], [-60, -124, 12, 30], [-60, 94, 12, 30]]
+        .map(([dx, dy, w, h]) => ({ dx, dy, w, h, hp: ph, max: ph, flash: 0 }));
+      b.plateScore = 800;
+      b.cores = [mkCore(-182, 0, 20, 72 * d.hp * k, { guard: true, gk: 'lock' })];
+      b.phase = 1; b.cyc = 0; b.sock = 0; b.spin = 0;
+    },
+    onPlateDown(b) {
+      if (!livePlates(b) && b.phase === 1) {
+        // 第2形態は扉が閉じた状態から始まる（guard は true のまま。表示だけ開閉扉に切り替える）
+        b.phase = 2; b.cyc = 0;
+        const c = b.core; c.shutter = true; c.open = 0; c.guard = true; c.gk = 'shut';
+        banner = { text: 'フェーズ2', sub: '装甲全損 ─ コアが開閉を始めた', t: 140, warn: true }; sfx('warn');
+      }
+    },
+    onHit(b, c) {
+      if (b.phase === 2 && c.hp <= c.max * 0.45) {
+        b.phase = 3; b.cyc = 0; b.sock = 0; startMove(b, c, [-58, -84], 70);
+        banner = { text: '最終形態', sub: 'コアが移動する！ 攻撃激化', t: 150, warn: true }; sfx('warn');
+      }
+    },
+    update(b, d) {
+      const c = b.core;
+      if (b.phase === 1) { c.guard = true; c.gk = 'lock'; c.shutter = false; }
+      else {
+        c.shutter = true; b.cyc++;
+        const p3 = b.phase === 3, closed = p3 ? 80 : 110, open = p3 ? 85 : 100, tr = 16;
+        // 最終形態：閉じている間に上下の砲座を入れ替える
+        if (p3 && b.cyc % (closed + open + tr * 2) === 0) { b.sock ^= 1; startMove(b, c, b.sock ? [-58, 84] : [-58, -84], 40); }
+        const moving = stepMove(b, c);
+        c.open = moving ? 0 : shutterOpen(b.cyc, closed, open, tr);
+        c.guard = moving || c.open < 0.7; c.gk = moving ? 'move' : 'shut';
+      }
+      const cx = b.x + c.dx, cy = b.y + c.dy;
+      if (b.phase === 1) {
+        if (every(b, 'fan', 95, 80)) { for (const s of [-1, 1]) fan(b.x - 170, b.y + s * 26, 5, 0.17, Math.PI + s * 0.1, 2.8); sfx('eshot'); }
+        if (every(b, 'aim', 120, 120)) { b.burst = 3; b.burstT = 0; }
+      } else if (b.phase === 2) {
+        if (c.guard) {
+          b.spin += 0.27;
+          if (every(b, 'spiral', 9, 10)) for (let a = 0; a < 3; a++) eShot(b.x - 110, b.y, b.spin + a * TAU / 3, 2.3 * d.bs);
+        } else if (every(b, 'aim2', 70, 20)) { b.burst = 3; b.burstT = 0; }
+        if (every(b, 'ring', 220, 160)) ring(b.x + 40, b.y, 14 + 2 * (G.loop - 1), 2.0);
+      } else {
+        b.mvSp = 1.4; b.spin -= 0.22;
+        if (every(b, 'spiral3', 10, 10)) for (let a = 0; a < 3; a++) eShot(b.x - 110, b.y, b.spin + a * TAU / 3, 2.4 * d.bs);
+        if (every(b, 'aim3', 80, 40)) { b.burst = 4; b.burstT = 0; }
+        if (every(b, 'fan3', 150, 90)) for (const s of [-1, 1]) fan(b.x - 170, b.y + s * 26, 7, 0.15, Math.PI + s * 0.12, 3.0);
+        if (!c.guard && every(b, 'coreShot', 40, 10)) aimShot(cx, cy, 3.4);
+      }
+      if (b.burst > 0 && --b.burstT <= 0) { b.burst--; b.burstT = 7; aimShot(b.x + 20, b.y - 112, 3.6); aimShot(b.x + 20, b.y + 112, 3.6); sfx('eshot'); }
+    },
+    status(b) {
+      const c = b.core;
+      if (b.phase === 1) return [`第1形態：装甲プレート 残り ${livePlates(b)}/3`, '#ffd27a'];
+      const head = b.phase === 2 ? '第2形態：' : '最終形態：';
+      if (c.gk === 'move') return [head + 'コア移動中', '#aab4d0'];
+      return c.guard ? [head + 'コア閉鎖中', '#aab4d0'] : [head + 'コア開放中！', '#7fffd0'];
+    }
+  }
+};
 function spawnBoss() {
-  const d = D();
-  boss = {
-    x: W + 230, y: H / 2 - 6, oy: H / 2 - 6, state: 'enter', t: 0, ft: 0, dieT: 0,
-    fanT: 90, aimT: 160, ringT: 240, burst: 0, burstT: 0,
-    body: [[-100, -38, 240, 76], [-50, -72, 160, 34], [-50, 38, 160, 34], [-165, -58, 65, 34], [-165, 24, 65, 34],
-           [140, -62, 36, 42], [140, 20, 36, 42]],
-    plates: [{ dx: -158, hp: 0, flash: 0 }, { dx: -140, hp: 0, flash: 0 }, { dx: -122, hp: 0, flash: 0 }],
-    plateY: -22, plateW: 9, plateH: 44,
-    core: { dx: -100, dy: 0, r: 18, hp: Math.round(40 * d.hp), max: 0, flash: 0 },
+  const d = D(), k = bossK(), key = stageDef().boss, def = BOSSES[key];
+  const b = {
+    kind: key, name: def.name, final: !!def.final, pal: def.pal,
+    x: W + 260, y: H / 2 - 6, oy: H / 2 - 6, state: 'enter', t: 0, ft: 0, mt: 0, mvSp: 1, dieT: 0,
+    tx: def.tx || 700, amp: def.amp || 120, yOff: def.yOff || 0,
+    body: [], plates: [], cores: [], devices: [], hullDmg: 0, hullFlash: 0, burst: 0, burstT: 0, moveT: 0, T: {},
     onDestroy: destroyBoss
   };
-  boss.plates.forEach(p => { p.hp = Math.round(6 * d.hp); });
-  boss.core.max = boss.core.hp;
-  banner = { text: '警告', sub: '巨大戦艦 接近中', t: 180, warn: true };
+  def.init(b, d, k);
+  b.core = b.cores[0];
+  for (const h of ['onHit', 'onCoreDown', 'onPlateDown', 'onDeviceDown']) if (def[h]) b[h] = arg => def[h](b, arg);
+  if (def.guard) b.syncGuard = () => def.guard(b);   // 装甲・装置の破壊直後に防御状態を即時再計算する
+  // 撃破演出の爆発範囲
+  let x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+  for (const r of b.body) { x0 = Math.min(x0, r[0]); x1 = Math.max(x1, r[0] + r[2]); y0 = Math.min(y0, r[1]); y1 = Math.max(y1, r[1] + r[3]); }
+  b.ext = { x0, x1, y0, y1 };
+  b.y = b.oy = H / 2 - 6 + b.yOff;
+  boss = b;
+  banner = { text: '警告', sub: `${def.name} 接近中 ─ ${def.hint}`, t: 200, warn: true };
   sfx('warn');
 }
 function updateBoss() {
   const b = boss, d = D();
   b.t++;
-  if (b.core.flash > 0) b.core.flash--;
-  for (const p of b.plates) if (p.flash > 0) p.flash--;
+  tickStructFlash(b);
   if (b.state === 'enter') {
-    b.x += (700 - b.x) * 0.018 - 0.3;
-    if (b.x <= 702) { b.x = 700; b.state = 'fight'; b.ft = 0; }
-    b.oy = b.y;   // 体当たり判定の前に同期
-    if (P.alive && structHitsPlayer(b)) killPlayer();
-  } else if (b.state === 'fight') {
+    // 登場中は全部位が無敵（hitStruct 側で弾く）。到着した更新ではそのまま下の 'fight' 処理まで進め、
+    // def.update で弱点の状態（開閉・移動・公転・封印など）を計算し終えてから、この更新の自機弾の判定に入る
+    b.x += (b.tx - b.x) * 0.018 - 0.3;
+    if (b.x <= b.tx + 2) { b.x = b.tx; b.state = 'fight'; b.ft = 0; }
+    else {
+      b.oy = b.y;   // 体当たり判定の前に同期
+      if (P.alive && structHitsPlayer(b)) killPlayer();
+    }
+  }
+  if (b.state === 'fight') {
     b.ft++;
-    b.y = H / 2 - 6 + 150 * Math.sin(b.ft * 0.011);
-    b.x = 700 + 45 * Math.sin(b.ft * 0.0047);
+    b.mt += b.mvSp;                // 揺れの速さ（フェーズで変わる）。位相を積算して速度変更時に飛ばないようにする
+    b.y = H / 2 - 6 + b.yOff + b.amp * Math.sin(b.mt * 0.011);
+    b.x = b.tx + 45 * Math.sin(b.ft * 0.0047);
     b.oy = b.y;   // 体当たり判定の前に同期（1更新遅れを防ぐ）
-    const rage = b.core.hp < b.core.max * 0.5;
-    if (--b.fanT <= 0) {           // 艦首から扇状弾
-      b.fanT = Math.round((rage ? 70 : 90) / d.fr);
-      const n = G.loop >= 2 ? 7 : 5;
-      for (const s of [-41, 41]) for (let k = 0; k < n; k++) {
-        eShot(b.x - 165, b.y + s, Math.PI + (k - (n - 1) / 2) * 0.17 + (s < 0 ? -0.08 : 0.08), 2.8 * d.bs);
-      }
-      sfx('eshot');
-    }
-    if (--b.aimT <= 0) { b.aimT = Math.round(150 / d.fr); b.burst = 3; b.burstT = 0; }
-    if (b.burst > 0 && --b.burstT <= 0) {   // 甲板砲から狙い撃ち
-      b.burst--; b.burstT = 8;
-      aimShot(b.x + 30, b.y - 78, 3.6); aimShot(b.x + 30, b.y + 78, 3.6);
-    }
-    if (rage && --b.ringT <= 0) {           // 怒り時：全方位弾
-      b.ringT = Math.round(200 / d.fr);
-      const n = 12 + 2 * (G.loop - 1), off = Math.random() * TAU;
-      for (let k = 0; k < n; k++) eShot(b.x - 60, b.y, off + k * TAU / n, 2.2 * d.bs);
-    }
+    BOSSES[b.kind].update(b, d);
     if (P.alive && structHitsPlayer(b)) killPlayer();
   } else if (b.state === 'dying') {
     b.dieT--; b.x += 0.4; b.y += 0.5;
-    if (b.dieT % 5 === 0) explode(b.x + rand(-160, 170), b.y + rand(-70, 70), 2);
-    if (b.dieT <= 0) { explode(b.x, b.y, 4); boss = null; shake = 20; toClear(); return; }
+    const e = b.ext;
+    if (b.dieT % 5 === 0) explode(b.x + rand(e.x0, e.x1), b.y + rand(e.y0, e.y1), 2);
+    if (b.final && b.dieT % 3 === 0) explode(b.x + rand(e.x0, e.x1), b.y + rand(e.y0, e.y1), 1);
+    if (b.dieT <= 0) { explode(b.x, b.y, 4); const name = b.name; boss = null; shake = 20; toClear(name); return; }
   }
   b.oy = b.y;
 }
 function destroyBoss() {
-  boss.state = 'dying'; boss.dieT = 150;
-  addScore(30000);
-  ebul.length = 0;
-  explode(boss.x + boss.core.dx, boss.y, 3);
+  const b = boss, c = b.lastCore || b.core;
+  b.state = 'dying'; b.dieT = b.final ? 220 : 150;
+  for (const k of b.cores) k.guard = false;
+  addScore(b.final ? 100000 : 20000 + 5000 * G.stage);
+  for (const e of enemies) if (!e.dead && e.minion) killEnemy(e, true);   // 艦載機も道連れ（撃ち返しは出さない）
+  ebul.length = 0;                                                          // 道連れの後で敵弾を全消去（撃破演出中に被弾しないように）
+  explode(b.x + c.dx, b.y + c.dy, 3);
   shake = 12;
 }
 
@@ -1324,14 +2033,22 @@ function updateCaps() {
 }
 // 1更新の間の自機（基準点を ox だけ前にずらす）と弾の最接近距離の2乗。
 // 自機は P.px,py → P.x,y、弾は (x-vx,y-vy) → (x,y) を同時に直線移動したとみなす（速いドラッグのすり抜け防止）。
-// 最接近時の自機基準点からの相対Xを sweptRX に残す。
-let sweptRX = 0;
-function sweptD2(b, ox) {
+// minRX を渡すと、相対移動の線分を「相対X > minRX」（前面）の区間に切り取ってから最短距離を測る。
+// 前面に入る区間が無ければ Infinity（シールドの前面判定用。終点だけで前後を決めるとすり抜けるため）
+function sweptD2(b, ox, minRX) {
   const sx = (b.x - b.vx) - (P.px + ox), sy = (b.y - b.vy) - P.py;
   const mx = (b.x - (P.x + ox)) - sx, my = (b.y - P.y) - sy, L = mx * mx + my * my;
-  const t = L > 0 ? clamp(-(sx * mx + sy * my) / L, 0, 1) : 1;
+  let t0 = 0, t1 = 1;
+  if (minRX !== undefined) {
+    if (mx === 0) { if (!(sx > minRX)) return Infinity; }
+    else {
+      const tc = (minRX - sx) / mx;            // 相対Xがちょうど minRX になる時刻
+      if (mx > 0) t0 = Math.max(t0, tc); else t1 = Math.min(t1, tc);
+      if (t0 > t1) return Infinity;
+    }
+  }
+  const t = L > 0 ? clamp(-(sx * mx + sy * my) / L, t0, t1) : t1;
   const cx = sx + mx * t, cy = sy + my * t;
-  sweptRX = cx;
   return cx * cx + cy * cy;
 }
 function updateEBullets() {
@@ -1340,9 +2057,9 @@ function updateEBullets() {
     if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) { b.dead = true; continue; }
     if (b.y > groundY(b.x) || b.y < ceilY(b.x)) { b.dead = true; continue; }
     if (!P.alive) continue;
-    if (P.shield > 0) {                      // 前面シールド（中心は自機の20px前。自機より前方の弾だけ）
-      const rr = 22 + b.r, d2 = sweptD2(b, 20);
-      if (d2 < rr * rr && sweptRX > -16) {
+    if (P.shield > 0) {                      // 前面シールド（中心は自機の20px前。中心から相対X > -16 の前面区間に入った弾だけ）
+      const rr = 22 + b.r, d2 = sweptD2(b, 20, -16);
+      if (d2 < rr * rr) {
         b.dead = true; P.shield--; P.shieldFlash = 8; spark(b.x, b.y, '#7ff'); sfx('shield');
         continue;
       }
@@ -1353,6 +2070,20 @@ function updateEBullets() {
     }
   }
   compact(ebul);
+}
+// エンディングの花火（効果音なし・暗幕の上に描く）
+const FW_COLORS = ['#ff6a80', '#ffd27a', '#7fffd0', '#9fc3ff', '#d68bff', '#ffffff'];
+function launchFirework() {
+  const x = rand(120, W - 120), y = rand(70, 260), c = FW_COLORS[(Math.random() * FW_COLORS.length) | 0], n = 46;
+  for (let i = 0; i < n; i++) {
+    const a = i * TAU / n + rand(-0.05, 0.05), sp = rand(1.6, 3.4), life = rand(40, 70);
+    fireworks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life, max: life, c, dead: false });
+  }
+  if (fireworks.length > 900) fireworks.splice(0, fireworks.length - 900);
+}
+function updateFireworks() {
+  for (const p of fireworks) { p.x += p.vx; p.y += p.vy; p.vx *= 0.97; p.vy = p.vy * 0.97 + 0.03; if (--p.life <= 0) p.dead = true; }
+  compact(fireworks);
 }
 function updateParticles() {
   for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vx *= 0.96; p.vy *= 0.96; if (--p.life <= 0) p.dead = true; }
@@ -1413,8 +2144,15 @@ function update() {
       if (pressed.KeyR || (stateT > 45 && (gpOk || tap))) newGame();
       break;
     case 'clear':
-      stateT++; updateParticles();
-      if ((stateT > 90 && (start || gpOk || tap)) || stateT > 600) nextLoop();
+      // フォーカスを失っている間は自動遷移のタイマー（約5秒／20秒）を進めない（無操作で次面が始まらないように）
+      if (!away) stateT++;
+      updateParticles();
+      if (G.final) {
+        // エンディング：花火を上げつつ、Enter 等（または20秒後）で次の周回へ
+        if (!away && stateT % 16 === 0 && stateT < 1100) launchFirework();   // タイマー停止中に同じ stateT で連発しないよう away 中は上げない
+        updateFireworks();
+        if ((stateT > 150 && (start || gpOk || tap)) || stateT > 1200) nextLoop();
+      } else if ((stateT > 90 && (start || gpOk || tap)) || stateT > 300) nextStage();   // 5秒で自動的に次のステージへ
       break;
   }
   for (const k in pressed) delete pressed[k];
@@ -1460,9 +2198,9 @@ function drawTerrain() {
     ctx.fillStyle = floorGrad; ctx.fill();
     ctx.lineWidth = 2;
     ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TF[i]) : ctx.moveTo(TX[i], TF[i]);
-    ctx.strokeStyle = '#72e6c0'; ctx.stroke();
+    ctx.strokeStyle = terLine; ctx.stroke();
     ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TF[i] + 12) : ctx.moveTo(TX[i], TF[i] + 12);
-    ctx.strokeStyle = 'rgba(70,170,150,0.35)'; ctx.stroke();
+    ctx.strokeStyle = terLine2; ctx.stroke();
   }
   if (maxC > 0) {
     ctx.beginPath(); ctx.moveTo(TX[0], 0);
@@ -1471,9 +2209,9 @@ function drawTerrain() {
     ctx.fillStyle = ceilGrad; ctx.fill();
     ctx.lineWidth = 2;
     ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TC[i]) : ctx.moveTo(TX[i], TC[i]);
-    ctx.strokeStyle = '#72e6c0'; ctx.stroke();
+    ctx.strokeStyle = terLine; ctx.stroke();
     ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(TX[i], TC[i] - 12) : ctx.moveTo(TX[i], TC[i] - 12);
-    ctx.strokeStyle = 'rgba(70,170,150,0.35)'; ctx.stroke();
+    ctx.strokeStyle = terLine2; ctx.stroke();
   }
 }
 function drawShip(x, y, tilt) {
@@ -1572,88 +2310,318 @@ function drawEnemy(e) {
   }
   ctx.restore();
 }
-function drawCorePlates(s, ox, oy) {
-  const c = s.core;
-  if (c.hp > 0) {
-    const pulse = 0.6 + 0.4 * Math.sin(frameCount * 0.15);
-    const cx = ox + c.dx, cy = oy + c.dy, ratio = c.hp / c.max;
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = `rgba(80,200,255,${0.28 * pulse})`; circle(cx, cy, c.r + 10);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = c.flash ? '#ffffff' : ratio > 0.5 ? '#58d8ff' : ratio > 0.25 ? '#ffb347' : '#ff4d5e';
-    circle(cx, cy, c.r);
-    ctx.fillStyle = '#ffffff'; circle(cx, cy, c.r * 0.35 * pulse + 2);
+// ---------- 弱点・装甲・装置の描画（状態が見て分かるように） ----------
+function drawCore(s, c, ox, oy) {
+  if (c.hp <= 0) return;
+  const cx = ox + c.dx, cy = oy + c.dy, ratio = c.hp / c.max;
+  if (c.hidden) {                    // 本体の奥に隠れたコア（本体より先に描くので影だけ見える）
+    ctx.fillStyle = 'rgba(80,120,170,0.5)'; circle(cx, cy, c.r);
+    return;
   }
-  for (const p of s.plates) {
-    if (p.hp <= 0) continue;
-    ctx.fillStyle = p.flash ? '#ffffff' : '#a3b3da';
-    ctx.fillRect(ox + p.dx, oy + s.plateY, s.plateW, s.plateH);
-    ctx.fillStyle = '#5d6c92';
-    ctx.fillRect(ox + p.dx + s.plateW - 3, oy + s.plateY, 3, s.plateH);
+  const g = c.guard || s.state === 'enter', gk = c.gk;   // ボス登場中はダメージが通らないので閉じた見た目にする
+  const pulse = 0.6 + 0.4 * Math.sin(frameCount * (c.rage ? 0.45 : 0.15));
+  const blink = gk === 'move' && ((frameCount >> 2) & 1);
+  // 光彩：ダメージが通る間だけ明るく光る
+  if (!g) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = c.rage ? `rgba(255,60,80,${0.45 * pulse})` : `rgba(${c.glow || '80,200,255'},${0.3 * pulse})`;
+    circle(cx, cy, c.r + 10 + (c.rage ? 6 * pulse : 0));
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  let col;
+  if (c.flash) col = '#ffffff';
+  else if (g && gk === 'move') col = blink ? '#c8d8ff' : '#5a6a90';
+  else if (g && gk !== 'barrier') col = '#3a4258';
+  else if (c.rage) col = pulse > 0.8 ? '#ffd0d0' : '#ff3b4e';
+  else col = c.col || (ratio > 0.5 ? '#58d8ff' : ratio > 0.25 ? '#ffb347' : '#ff4d5e');
+  ctx.fillStyle = col; circle(cx, cy, c.r);
+  if (!g || gk === 'barrier') { ctx.fillStyle = '#ffffff'; circle(cx, cy, c.r * 0.35 * pulse + 2); }
+  // 封印（装甲・砲台が残っている）：灰色のコアに錠前の十字
+  if (g && gk === 'lock') {
+    ctx.strokeStyle = '#c0c8e0'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, c.r + 3, 0, TAU); ctx.stroke();
+    const q = c.r * 0.72;
+    ctx.beginPath(); ctx.moveTo(cx - q, cy - q); ctx.lineTo(cx + q, cy + q); ctx.moveTo(cx + q, cy - q); ctx.lineTo(cx - q, cy + q); ctx.stroke();
+  }
+  // 開閉扉：上下の装甲板がスライド。閉じている間は赤、開いている間は緑の縁
+  if (c.shutter) {
+    const o = c.open * (c.r + 8), dw = c.r * 2 + 12, dh = c.r + 6, x0 = cx - dw / 2;
+    ctx.fillStyle = s.doorCol || '#8e98bc';
+    ctx.fillRect(x0, cy - dh - o, dw, dh); ctx.fillRect(x0, cy + o, dw, dh);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    for (let i = 1; i < 4; i++) { ctx.fillRect(x0 + i * dw / 4, cy - dh - o + 2, 2, dh - 4); ctx.fillRect(x0 + i * dw / 4, cy + o + 2, 2, dh - 4); }
+    ctx.fillStyle = c.guard ? (((frameCount >> 3) & 1) ? '#ff5a5a' : '#a02a2a') : '#6aff9a';
+    ctx.fillRect(x0, cy - o - 3, dw, 3); ctx.fillRect(x0, cy + o, dw, 3);
+  }
+  // バリア：電磁の泡（明滅する六角形）
+  if (g && gk === 'barrier') {
+    const R = coreHitR(c) + 2, fl = 0.55 + 0.45 * Math.random();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(90,220,255,${0.16 * fl})`; circle(cx, cy, R);
+    ctx.strokeStyle = `rgba(160,240,255,${0.75 * fl})`; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 6; i++) { const a = i * TAU / 6 + frameCount * 0.02; i ? ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R) : ctx.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); }
+    ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  // 無効な弾が当たった瞬間の白い輪
+  if (c.deny > 0) {
+    ctx.strokeStyle = `rgba(255,255,255,${c.deny / 6})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, coreHitR(c) + 5, 0, TAU); ctx.stroke();
+  }
+  if (c.label && s.cores.length > 1) {
+    ctx.font = 'bold 12px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    outlinedText(c.label, cx, cy + c.r + 12, c.rage ? '#ff8a9a' : '#e8f6ff');
   }
 }
+function drawPlate(p, ox, oy) {
+  if (p.hp <= 0) return;
+  const x = ox + p.dx, y = oy + p.dy, r = p.hp / p.max;
+  ctx.fillStyle = p.flash ? '#ffffff' : r > 0.5 ? '#a3b3da' : '#c8988a';
+  ctx.fillRect(x, y, p.w, p.h);
+  ctx.fillStyle = '#5d6c92'; ctx.fillRect(x + p.w - 3, y, 3, p.h);
+  // 残り耐久の目盛り
+  const gh = (p.h - 4) * r;
+  ctx.fillStyle = '#ffd27a'; ctx.fillRect(x + 1, y + p.h - 2 - gh, 2, gh);
+}
+function drawDevice(v, ox, oy) {
+  const x = ox + v.dx, y = oy + v.dy;
+  if (v.dead) {                      // 壊れた装置：復活までの進み具合を輪で示す
+    ctx.fillStyle = '#1a1030'; circle(x, y, v.r);
+    ctx.strokeStyle = 'rgba(170,150,255,0.85)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, v.r + 4, -Math.PI / 2, -Math.PI / 2 + TAU * clamp(v.prog || 0, 0, 1)); ctx.stroke();
+    return;
+  }
+  const p = 0.6 + 0.4 * Math.sin(frameCount * 0.3);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = `rgba(120,240,255,${0.35 * p})`; circle(x, y, v.r + 8);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = v.flash ? '#ffffff' : v.hp / v.max > 0.5 ? '#4ad8ff' : '#ffb347'; circle(x, y, v.r);
+  ctx.fillStyle = '#e8ffff'; circle(x, y, v.r * 0.4 * p + 2);
+  ctx.strokeStyle = '#2a6a90'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, v.r, 0, TAU); ctx.stroke();
+}
+function drawStructParts(s, ox, oy) {
+  for (const p of s.plates) drawPlate(p, ox, oy);
+  for (const v of s.devices) drawDevice(v, ox, oy);
+  for (const c of s.cores) if (!c.hidden) drawCore(s, c, ox, oy);
+}
 function drawFort() {
-  const f = fort, x = f.x, gy = f.gy;
+  const f = fort, x = f.x, gy = f.gy, col = f.col;
+  f.doorCol = col[1];
   ctx.save();
   if (f.state === 'dying') { ctx.globalAlpha = 0.55 + 0.45 * Math.random(); ctx.translate(rand(-2, 2), (96 - f.dieT) * 0.35); }
   ctx.fillStyle = '#07080f'; ctx.fillRect(x, gy - 105, 72, 60);    // コアの奥まった開口部
   for (const r of f.body) {
-    ctx.fillStyle = '#2b3245'; ctx.fillRect(x + r[0], gy + r[1], r[2], r[3]);
-    ctx.fillStyle = '#56627f'; ctx.fillRect(x + r[0], gy + r[1], r[2], 4);
+    ctx.fillStyle = col[0]; ctx.fillRect(x + r[0], gy + r[1], r[2], r[3]);
+    ctx.fillStyle = col[1]; ctx.fillRect(x + r[0], gy + r[1], r[2], 4);
     ctx.strokeStyle = '#141824'; ctx.lineWidth = 2; ctx.strokeRect(x + r[0] + 1, gy + r[1] + 1, r[2] - 2, r[3] - 2);
   }
-  ctx.fillStyle = '#1b2030';
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
   for (let i = 0; i < 5; i++) ctx.fillRect(x + 92 + i * 42, gy - 120, 30, 8);
-  ctx.fillStyle = '#d6a23a';
+  ctx.fillStyle = col[2];
   for (let i = 0; i < 6; i++) ctx.fillRect(x + 82 + i * 36, gy - 30, 18, 6);
   const on = (frameCount >> 4) & 1;
   ctx.fillStyle = on ? '#ff4040' : '#5a1a1a';
-  ctx.fillRect(x + 125, gy - 200, 8, 8); ctx.fillRect(x + 227, gy - 200, 8, 8);
-  drawCorePlates(f, x, gy);
+  ctx.fillRect(x + 160, gy - 200, 8, 8); ctx.fillRect(x + 196, gy - 200, 8, 8);
+  // 封印型：残り砲台の数をランプで表示（赤＝残っている、緑＝破壊済み）
+  if (f.kind === 'turret') {
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = i < f.turretsLeft ? (on ? '#ff4040' : '#b02020') : '#40ff90';
+      ctx.fillRect(x + 6 + i * 22, gy - 118, 14, 6);
+    }
+  }
+  drawStructParts(f, x, gy);
   ctx.restore();
 }
+// ---------- ボスの描画（本体の絵。弱点類は drawStructParts で上から描く） ----------
+function thrust(x, y, h, rgb) {
+  ctx.globalCompositeOperation = 'lighter';
+  const fl = 16 + Math.random() * 14;
+  ctx.fillStyle = `rgba(${rgb},0.55)`;
+  ctx.beginPath(); ctx.moveTo(x, y - h); ctx.lineTo(x + fl, y); ctx.lineTo(x, y + h); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+}
+function hullRects(b, rects) {
+  const p = b.pal, hf = b.hullFlash > 0;
+  for (const r of rects) {
+    ctx.fillStyle = hf ? '#d8a070' : p[0]; ctx.fillRect(r[0], r[1], r[2], r[3]);
+    ctx.fillStyle = p[1]; ctx.fillRect(r[0], r[1], r[2], 3);
+    ctx.fillStyle = p[2]; ctx.fillRect(r[0], r[1] + r[3] - 3, r[2], 3);
+    ctx.strokeStyle = p[2]; ctx.lineWidth = 2; ctx.strokeRect(r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2);
+  }
+}
+function socketRing(x, y, r, col) {
+  ctx.fillStyle = '#04080e'; circle(x, y, r);
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+}
+const BOSS_DRAW = {
+  argos(b) {
+    for (const sy of [-41, 41]) thrust(176, sy, 14, '90,170,255');
+    // エンジン
+    ctx.fillStyle = '#2a2347'; ctx.fillRect(140, -62, 36, 42); ctx.fillRect(140, 20, 36, 42);
+    ctx.fillStyle = '#6b5aa8';
+    for (let i = 0; i < 3; i++) { ctx.fillRect(146 + i * 10, -58, 4, 34); ctx.fillRect(146 + i * 10, 24, 4, 34); }
+    // 甲板・船体・艦首
+    poly([[-50, -38], [-28, -72], [100, -72], [112, -38]], '#4b3a78');
+    poly([[-50, -38], [-28, -72], [100, -72], [112, -38]], '#4b3a78', true);
+    poly([[-100, -38], [112, -38], [140, -28], [140, 28], [112, 38], [-100, 38]], '#33285a');
+    poly([[-100, -24], [-165, -28], [-165, -54], [-100, -58]], '#5e4a96');
+    poly([[-100, -24], [-165, -28], [-165, -54], [-100, -58]], '#5e4a96', true);
+    ctx.fillStyle = '#090614'; ctx.fillRect(-165, -24, 66, 48);       // コアへの通路
+    ctx.fillStyle = '#8f7bd6'; ctx.fillRect(-100, -38, 240, 3); ctx.fillRect(-100, 35, 240, 3);
+    ctx.fillStyle = '#ffd36b';
+    for (let i = 0; i < 9; i++) { ctx.fillRect(-70 + i * 20, -5, 10, 3); ctx.fillRect(-20 + i * 13, -60, 6, 3); ctx.fillRect(-20 + i * 13, 57, 6, 3); }
+    // 甲板砲
+    for (const sy of [-1, 1]) {
+      const gx = 30, gyy = sy * 76;
+      ctx.save(); ctx.translate(gx, gyy);
+      ctx.rotate(P && P.alive ? Math.atan2(P.y - (b.y + gyy), P.x - (b.x + gx)) : Math.PI);
+      ctx.fillStyle = '#cbbff2'; ctx.fillRect(0, -3, 18, 6);
+      ctx.restore();
+      ctx.fillStyle = '#7a6aa8'; circle(gx, gyy, 9);
+    }
+    // 艦首砲口（発射前に光る）
+    ctx.fillStyle = (b.state === 'fight' && b.T.fan !== undefined && b.T.fan < 18) ? '#ffffff' : '#ff8a3d';
+    circle(-165, -41, 5); circle(-165, 41, 5);
+  },
+  garm(b) {
+    thrust(184, -24, 12, '255,150,80'); thrust(184, 24, 12, '255,150,80');
+    hullRects(b, b.body);
+    ctx.fillStyle = b.pal[3];
+    for (let i = 0; i < 10; i++) ctx.fillRect(-130 + i * 28, -2, 14, 3);          // 飛行甲板の誘導灯
+    ctx.fillStyle = '#ffe0a0';
+    for (let i = 0; i < 5; i++) ctx.fillRect(32 + i * 13, -60, 7, 5);             // 艦橋の窓
+    ctx.fillStyle = '#1a0c10'; ctx.fillRect(-100, 36, 150, 10);                   // 格納庫の口
+    ctx.fillStyle = '#c08aa0'; circle(30, -74, 7);
+  },
+  dune(b) {
+    const p = b.pal, hf = b.hullFlash > 0;
+    // 脚
+    ctx.strokeStyle = p[2]; ctx.lineWidth = 6;
+    for (let i = 0; i < 3; i++) {
+      const ph = Math.sin(frameCount * 0.12 + i * 1.7) * 6;
+      ctx.beginPath(); ctx.moveTo(40 - i * 40, 50); ctx.lineTo(60 - i * 40 + ph, 86); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(40 - i * 40, -50); ctx.lineTo(60 - i * 40 - ph, -86); ctx.stroke();
+    }
+    hullRects(b, [[90, -44, 56, 88], [-60, -80, 120, 18], [-60, 62, 120, 18]]);
+    // 甲殻（硬い：ダメージ1/8）。斜めの装甲模様で「硬い部位」と分かるようにする
+    ctx.fillStyle = hf ? '#d8a070' : p[0];
+    ctx.beginPath(); ctx.ellipse(0, 0, 92, 64, 0, 0, TAU); ctx.fill();
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(0, 0, 92, 64, 0, 0, TAU); ctx.clip();
+    ctx.strokeStyle = p[2]; ctx.lineWidth = 3;
+    for (let i = -5; i <= 5; i++) { ctx.beginPath(); ctx.moveTo(i * 20 - 30, -64); ctx.lineTo(i * 20 + 30, 64); ctx.stroke(); }
+    ctx.restore();
+    ctx.strokeStyle = p[1]; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(0, 0, 92, 64, 0, 0, TAU); ctx.stroke();
+    // ハサミ
+    for (const s of [false, true]) poly([[-90, -72], [-165, -66], [-150, -42], [-90, -42]], hf ? '#d8a070' : p[0], s);
+    ctx.fillStyle = p[1];
+    ctx.fillRect(-165, -68, 75, 3); ctx.fillRect(-165, 65, 75, 3);
+    // 口（奥に赤いコア）
+    ctx.fillStyle = '#1a0804'; ctx.fillRect(-120, -18, 34, 36);
+    ctx.font = 'bold 12px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = p[1]; ctx.fillText('装甲', 20, -24); ctx.fillText('1/8', 20, 22);
+  },
+  nereid(b) {
+    const p = b.pal;
+    thrust(172, 0, 16, '80,220,255');
+    ctx.fillStyle = p[2]; ctx.fillRect(120, -26, 52, 52);
+    poly([[-30, -40], [-8, -92], [66, -92], [66, -40]], p[0]);
+    poly([[-30, -40], [-8, -92], [66, -92], [66, -40]], p[0], true);
+    ctx.fillStyle = p[0]; ctx.beginPath(); ctx.ellipse(0, 0, 126, 42, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = p[1]; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = p[3];
+    for (let i = 0; i < 6; i++) circle(-70 + i * 28, -12, 3.5);
+    ctx.fillStyle = 'rgba(111,240,255,0.25)';
+    for (let i = 0; i < 6; i++) circle(-70 + i * 28, 14, 3);
+    // コアのソケット（使われていない場所は暗い穴）
+    b.sockets.forEach(([sx, sy], i) => { if (i !== b.phase - 1 || b.moveT > 0) socketRing(sx, sy, 19, p[1]); });
+  },
+  gemini(b) {
+    const p = b.pal;
+    thrust(150, 0, 12, '180,230,255');
+    hullRects(b, b.body);
+    // 氷晶のとげ
+    ctx.globalAlpha *= 0.9;
+    poly([[-140, 20], [-120, -8], [-100, 20]], '#dff4ff');
+    poly([[-100, 66], [-84, 90], [-70, 66]], '#dff4ff');
+    poly([[60, -92], [80, -122], [100, -92]], '#dff4ff');
+    poly([[100, -92], [116, -112], [130, -92]], '#dff4ff');
+    ctx.globalAlpha /= 0.9;
+    // 2つのコアをつなぐ導管
+    const [L, R] = b.cores;
+    ctx.strokeStyle = b.enraged ? 'rgba(255,120,140,0.6)' : 'rgba(200,236,255,0.6)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(L.dx, L.dy); ctx.lineTo(-20, 0); ctx.lineTo(R.dx, R.dy); ctx.stroke();
+    for (const c of b.cores) if (c.hp <= 0) socketRing(c.dx, c.dy, c.r, '#5a6a80');
+    ctx.fillStyle = p[1]; ctx.fillRect(-60, -4, 140, 3);
+  },
+  tesla(b) {
+    const p = b.pal;
+    thrust(130, 0, 18, '180,120,255');
+    hullRects(b, b.body);
+    // コイル
+    ctx.fillStyle = p[3];
+    for (let i = 0; i < 4; i++) { ctx.fillRect(-42, -96 + i * 10, 26, 3); ctx.fillRect(-42, 62 + i * 10, 26, 3); }
+    // 装置 → コアへの電撃（バリア展開中）
+    const c = b.core;
+    if (c.guard) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(150,240,255,0.8)'; ctx.lineWidth = 2;
+      for (const v of b.devices) {
+        if (v.dead) continue;
+        ctx.beginPath(); ctx.moveTo(v.dx, v.dy);
+        for (let k = 1; k <= 5; k++) {
+          const t = k / 6;
+          ctx.lineTo(v.dx + (c.dx - v.dx) * t + rand(-7, 7), v.dy + (c.dy - v.dy) * t + rand(-5, 5));
+        }
+        ctx.lineTo(c.dx, c.dy); ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.fillStyle = '#ffe8ff';
+    for (let i = 0; i < 4; i++) ctx.fillRect(-50 + i * 30, -42, 12, 4);
+  },
+  citadel(b) {
+    const p = b.pal;
+    thrust(110, -24, 10, '255,200,120'); thrust(110, 24, 10, '255,200,120');
+    // コアの周回軌道（どこを回るか見えるように）
+    ctx.strokeStyle = 'rgba(255,204,102,0.28)'; ctx.lineWidth = 2;
+    if (ctx.setLineDash) ctx.setLineDash([6, 8]);
+    ctx.beginPath(); ctx.ellipse(0, 0, 118, 100, 0, 0, TAU); ctx.stroke();
+    if (ctx.setLineDash) ctx.setLineDash([]);
+    hullRects(b, b.body);
+    // 都市の窓明かり
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
+      ctx.fillStyle = ((i * 7 + j * 3 + (frameCount >> 5)) % 5 === 0) ? p[3] : '#2a2a34';
+      ctx.fillRect(-58 + i * 20, -58 + j * 20, 10, 8);
+    }
+    poly([[-96, -16], [-118, 0], [-96, 16]], p[1]);
+  },
+  nemesis(b) {
+    const p = b.pal, pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.1);
+    thrust(180, -50, 16, '255,80,110'); thrust(180, 50, 16, '255,80,110');
+    hullRects(b, b.body);
+    poly([[-40, -110], [10, -140], [110, -110]], p[0]);
+    poly([[-40, -110], [10, -140], [110, -110]], p[0], true);
+    poly([[-170, -32], [-196, 0], [-170, 32]], p[2]);
+    ctx.fillStyle = `rgba(255,106,128,${0.4 + 0.5 * pulse})`;
+    ctx.fillRect(-110, -3, 240, 4); ctx.fillRect(-40, -84, 150, 3); ctx.fillRect(-40, 81, 150, 3);
+    // 最終形態のコア移動先
+    if (b.phase >= 2) { socketRing(-58, -84, 22, p[1]); socketRing(-58, 84, 22, p[1]); }
+    socketRing(-182, 0, 22, p[1]);
+  }
+};
 function drawBoss() {
   const b = boss;
-  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.save();
   if (b.state === 'dying') ctx.globalAlpha = 0.55 + 0.45 * Math.random();
-  // 噴射炎（後方）
-  ctx.globalCompositeOperation = 'lighter';
-  for (const sy of [-41, 41]) {
-    const fl = 18 + Math.random() * 14;
-    ctx.fillStyle = 'rgba(90,170,255,0.55)';
-    ctx.beginPath(); ctx.moveTo(176, sy - 14); ctx.lineTo(176 + fl, sy); ctx.lineTo(176, sy + 14); ctx.fill();
-  }
-  ctx.globalCompositeOperation = 'source-over';
-  // エンジン
-  ctx.fillStyle = '#2a2347'; ctx.fillRect(140, -62, 36, 42); ctx.fillRect(140, 20, 36, 42);
-  ctx.fillStyle = '#6b5aa8';
-  for (let i = 0; i < 3; i++) { ctx.fillRect(146 + i * 10, -58, 4, 34); ctx.fillRect(146 + i * 10, 24, 4, 34); }
-  // 甲板・船体・艦首
-  poly([[-50, -38], [-28, -72], [100, -72], [112, -38]], '#4b3a78');
-  poly([[-50, -38], [-28, -72], [100, -72], [112, -38]], '#4b3a78', true);
-  poly([[-100, -38], [112, -38], [140, -28], [140, 28], [112, 38], [-100, 38]], '#33285a');
-  poly([[-100, -24], [-165, -28], [-165, -54], [-100, -58]], '#5e4a96');
-  poly([[-100, -24], [-165, -28], [-165, -54], [-100, -58]], '#5e4a96', true);
-  ctx.fillStyle = '#090614'; ctx.fillRect(-165, -24, 66, 48);       // コアへの通路
-  ctx.fillStyle = '#8f7bd6'; ctx.fillRect(-100, -38, 240, 3); ctx.fillRect(-100, 35, 240, 3);
-  ctx.fillStyle = '#ffd36b';
-  for (let i = 0; i < 9; i++) { ctx.fillRect(-70 + i * 20, -5, 10, 3); ctx.fillRect(-20 + i * 13, -60, 6, 3); ctx.fillRect(-20 + i * 13, 57, 6, 3); }
-  // 甲板砲
-  for (const sy of [-1, 1]) {
-    const gx = 30, gyy = sy * 76;
-    ctx.save(); ctx.translate(gx, gyy);
-    ctx.rotate(P && P.alive ? Math.atan2(P.y - (b.y + gyy), P.x - (b.x + gx)) : Math.PI);
-    ctx.fillStyle = '#cbbff2'; ctx.fillRect(0, -3, 18, 6);
-    ctx.restore();
-    ctx.fillStyle = '#7a6aa8'; circle(gx, gyy, 9);
-  }
-  // 艦首砲口（発射前に光る）
-  ctx.fillStyle = (b.state === 'fight' && b.fanT < 18) ? '#ffffff' : '#ff8a3d';
-  circle(-165, -41, 5); circle(-165, 41, 5);
+  for (const c of b.cores) if (c.hidden && c.hp > 0) drawCore(b, c, b.x, b.y);   // 本体の奥に隠れたコア
+  ctx.translate(b.x, b.y);
+  BOSS_DRAW[b.kind](b);
   ctx.restore();
   ctx.save();
   if (b.state === 'dying') ctx.globalAlpha = 0.7;
-  drawCorePlates(b, b.x, b.y);
+  drawStructParts(b, b.x, b.y);
   ctx.restore();
 }
 function drawCaps() {
@@ -1687,9 +2655,10 @@ function drawPBullets() {
         break;
       case 'laser':
         ctx.globalCompositeOperation = 'lighter';
-        ctx.fillStyle = 'rgba(60,160,255,0.38)'; ctx.fillRect(b.x - b.len, b.y - 7, b.len, 14);
-        ctx.fillStyle = '#9fe0ff'; ctx.fillRect(b.x - b.len, b.y - 3.5, b.len, 7);
-        ctx.fillStyle = '#ffffff'; ctx.fillRect(b.x - b.len, b.y - 1.2, b.len, 2.4);
+        // 芯の幅＝当たり判定の高さ（LASER_H）。外側の淡い光は見た目だけ
+        ctx.fillStyle = 'rgba(60,160,255,0.32)'; ctx.fillRect(b.x - b.len, b.y - LASER_H / 2 - 2, b.len, LASER_H + 4);
+        ctx.fillStyle = '#9fe0ff'; ctx.fillRect(b.x - b.len, b.y - LASER_H / 2, b.len, LASER_H);
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(b.x - b.len, b.y - 0.8, b.len, 1.6);
         ctx.globalCompositeOperation = 'source-over';
         break;
       case 'missile': {
@@ -1732,6 +2701,17 @@ function drawParticles() {
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
 }
+function drawFireworks() {
+  if (!fireworks.length) return;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of fireworks) {
+    const k = p.life / p.max;
+    ctx.globalAlpha = Math.min(1, k * 1.5);
+    ctx.fillStyle = p.c; ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
 function outlinedText(str, x, y, color) {
   ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(str, x, y);
   ctx.fillStyle = color; ctx.fillText(str, x, y);
@@ -1743,7 +2723,7 @@ function drawHUD() {
   ctx.textAlign = 'center'; outlinedText('ハイスコア ' + pad(Math.max(hiScore, G.score), 8), W / 2, 10, '#ffd27a');
   // タッチ用ポーズボタンを出している間は、その左に寄せる
   const hudR = (touchUIOn() && state === 'play') ? tbtnLayout().pause.x - 12 : W - 16;
-  ctx.textAlign = 'right';  outlinedText(`第${G.loop}周　残機 ${Math.max(0, G.lives)}`, hudR, 10, '#ffffff');
+  ctx.textAlign = 'right';  outlinedText(`STAGE ${G.stage}　第${G.loop}周　残機 ${Math.max(0, G.lives)}`, hudR, 10, '#ffffff');
   // パワーアップゲージ
   const cw = 118, ch = 22, gx = (W - cw * 6) / 2, gy = H - ch - 6;
   ctx.fillStyle = 'rgba(4,8,24,0.72)'; ctx.fillRect(gx - 4, gy - 4, cw * 6 + 8, ch + 8);
@@ -1771,17 +2751,22 @@ function drawHUD() {
   const s = boss && boss.state !== 'dying' ? boss : (fort && fort.state === 'alive' && fort.x < W ? fort : null);
   if (s) {
     const bw = 300, bx = (W - bw) / 2, by = 38;
+    let hp = 0, mx = 0;
+    for (const c of s.cores) { hp += c.hp; mx += c.max; }
+    const guarded = s.state === 'enter' || s.cores.every(c => c.hp <= 0 || c.guard || c.hidden);
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(bx - 2, by - 2, bw + 4, 10);
-    ctx.fillStyle = '#ff5a6e'; ctx.fillRect(bx, by, bw * Math.max(0, s.core.hp / s.core.max), 6);
+    ctx.fillStyle = guarded ? '#8a90a8' : '#ff5a6e'; ctx.fillRect(bx, by, bw * Math.max(0, hp / (mx || 1)), 6);   // 無敵中は灰色
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = 'bold 12px ' + FONT;
-    outlinedText(s === boss ? '巨大戦艦 コア' : '要塞 コア', W / 2, by + 10, '#ffc4cc');
+    outlinedText(`${s.name} コア` + (s.cores.length > 1 ? `（残り ${liveCores(s)}/${s.cores.length}）` : ''), W / 2, by + 10, '#ffc4cc');
+    const st = structStatus(s);
+    if (st) outlinedText(st[0], W / 2, by + 26, st[1]);
   }
   // 浮遊テキスト
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px ' + FONT;
   for (const t of texts) { ctx.globalAlpha = Math.min(1, t.t / 20); outlinedText(t.str, t.x, t.y, t.color); }
   ctx.globalAlpha = 1;
-  // バナー
-  if (banner) {
+  // バナー（banner.t は stepGame でしか減らないので、プレイ中だけ描く）
+  if (banner && state === 'play') {
     const a = Math.min(1, banner.t / 25, (200 - banner.t) / 20 + 0.2);
     ctx.globalAlpha = clamp(a, 0, 1);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1791,6 +2776,15 @@ function drawHUD() {
     if (banner.sub) { ctx.font = 'bold 20px ' + FONT; outlinedText(banner.sub, W / 2, 236, '#ffe3a8'); }
     ctx.globalAlpha = 1;
   }
+}
+// 中ボス／ボスの弱点の状態（HUDに表示する文と色）
+function structStatus(s) {
+  if (s === boss) return s.state === 'enter' ? ['接近中 ─ 停止するまで攻撃は通らない', '#aab4d0'] : BOSSES[s.kind].status(s);
+  if (s.kind === 'shutter') return s.core.guard ? ['シャッター閉鎖中 ─ 開くのを待て', '#aab4d0'] : ['コア露出中！', '#7fffd0'];
+  // 封印型は二段階：①砲台 → ②防壁プレート → コア。プレートの残り枚数も常に出す
+  const n = livePlates(s), pl = `防壁プレート 残り ${n}/${s.plates.length}`;
+  if (s.turretsLeft > 0) return [`封印中：上の砲台 残り ${s.turretsLeft}/${s.turretsTotal}　${pl}`, '#ffd27a'];
+  return n ? [`封印解除 ─ ${pl}：壊してコアを狙え`, '#ffe08a'] : ['封印解除・プレート全壊 ─ コアを撃て！', '#7fffd0'];
 }
 function dim(a) { ctx.fillStyle = `rgba(0,0,8,${a})`; ctx.fillRect(0, 0, W, H); }
 function drawTitle() {
@@ -1804,7 +2798,7 @@ function drawTitle() {
   ctx.font = 'bold 20px ' + FONT; ctx.fillStyle = '#9fc3ff'; ctx.fillText('A Z U R E   V E C T O R', W / 2, 190);
   ctx.font = '16px ' + FONT; ctx.fillStyle = '#d8e4ff';
   const lines = ['移動：矢印キー / WASD　　ショット：Z / スペース（長押しで連射）',
-                 'パワーアップ発動：X　　ポーズ：P　　リスタート：R　　音のON/OFF：M',
+                 'パワーアップ発動：X　　ポーズ：P（ポーズ中にRでリスタート）　　音のON/OFF：M',
                  'オレンジのカプセルを取るとゲージが進む。光っている項目をXで発動！',
                  'コントローラー：スティック/十字キーで移動　A・Xでショット　B・Yで発動　START/SELECTでポーズ'];
   const showTouch = isTouchDev || touch.mode;
@@ -1857,7 +2851,7 @@ function render() {
   drawTerrain();
   if (fort) drawFort();
   drawCaps();
-  for (const e of enemies) drawEnemy(e);
+  for (const e of enemies) if (!e.dead) drawEnemy(e);   // 撃破済み（compact 前）の敵は爆発の上に描かない
   if (boss) drawBoss();
   drawPBullets();
   drawPlayer();
@@ -1874,19 +2868,44 @@ function render() {
   } else if (state === 'gameover') {
     dim(Math.min(0.6, stateT / 60));
     ctx.font = '900 60px ' + FONT; outlinedText('ゲームオーバー', W / 2, H / 2 - 50, '#ff5a6e');
-    ctx.font = 'bold 22px ' + FONT; outlinedText(`スコア ${pad(G.score, 8)}　第${G.loop}周`, W / 2, H / 2 + 14, '#ffffff');
-    if (G.score >= hiScore && G.score > 0) outlinedText('ハイスコア更新！', W / 2, H / 2 + 46, '#ffd27a');
+    ctx.font = 'bold 22px ' + FONT; outlinedText(`スコア ${pad(G.score, 8)}　STAGE ${G.stage}　第${G.loop}周`, W / 2, H / 2 + 14, '#ffffff');
+    if (G.score > G.hiAtStart) outlinedText('ハイスコア更新！', W / 2, H / 2 + 46, '#ffd27a');   // 開始時のハイスコアを超えた時だけ（同点は出さない）
     if ((stateT >> 5) & 1) { ctx.font = 'bold 20px ' + FONT; outlinedText(touch.mode || isTouchDev ? 'タップ / R キー / A ボタンでリスタート' : 'R キー / A ボタンでリスタート', W / 2, H / 2 + 92, '#cfe0ff'); }
+  } else if (state === 'clear' && G.final) {
+    // エンディング（8ステージ制覇）
+    dim(Math.min(0.62, stateT / 60));
+    drawFireworks();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const g = ctx.createLinearGradient(0, H / 2 - 150, 0, H / 2 - 100);
+    g.addColorStop(0, '#fff6d8'); g.addColorStop(0.5, '#ffd27a'); g.addColorStop(1, '#ff9a5a');
+    ctx.font = '900 52px ' + FONT;
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.strokeText('全8ステージ制覇！', W / 2, H / 2 - 128);
+    ctx.fillStyle = g; ctx.fillText('全8ステージ制覇！', W / 2, H / 2 - 128);
+    ctx.font = 'bold 20px ' + FONT;
+    outlinedText(`${G.lastBoss}は沈黙し、銀河に静けさが戻った。`, W / 2, H / 2 - 74, '#ffffff');
+    outlinedText(`蒼穹ベクター隊、第${G.loop}周 任務完了 ─ CONGRATULATIONS`, W / 2, H / 2 - 46, '#9fc3ff');
+    ctx.font = 'bold 20px ' + FONT;
+    outlinedText(`ステージ・残機ボーナス +${G.bonus}`, W / 2, H / 2 - 6, '#ffe3a8');
+    outlinedText(`全ステージ制覇ボーナス +${G.allBonus}`, W / 2, H / 2 + 22, '#ffe3a8');
+    ctx.font = '900 30px ' + FONT;
+    outlinedText(`最終スコア ${pad(G.score, 8)}`, W / 2, H / 2 + 62, '#ffffff');
+    ctx.font = 'bold 18px ' + FONT;
+    outlinedText(`ハイスコア ${pad(Math.max(hiScore, G.score), 8)}　残機 ${Math.max(0, G.lives)}`, W / 2, H / 2 + 96, '#ffd27a');
+    if (stateT > 150 && ((stateT >> 5) & 1)) {
+      outlinedText(`${touch.mode || isTouchDev ? 'タップ / ' : ''}Z / Enter / A ボタンで第${G.loop + 1}周へ（ステージ1から・難易度アップ）`, W / 2, H / 2 + 140, '#cfe0ff');
+    }
   } else if (state === 'clear') {
     dim(Math.min(0.55, stateT / 60));
-    ctx.font = '900 54px ' + FONT; outlinedText(`第${G.loop}周 クリア！`, W / 2, H / 2 - 70, '#7fffd0');
+    ctx.font = '900 54px ' + FONT; outlinedText(`STAGE ${G.stage} クリア！`, W / 2, H / 2 - 70, '#7fffd0');
     ctx.font = 'bold 22px ' + FONT;
-    outlinedText('巨大戦艦を撃破した', W / 2, H / 2 - 16, '#ffffff');
-    outlinedText(`残機ボーナス +${G.bonus}`, W / 2, H / 2 + 18, '#ffe3a8');
+    outlinedText(`${G.lastBoss || 'ボス'}を撃破した`, W / 2, H / 2 - 16, '#ffffff');
+    outlinedText(`ステージ・残機ボーナス +${G.bonus}`, W / 2, H / 2 + 18, '#ffe3a8');
     outlinedText(`スコア ${pad(G.score, 8)}`, W / 2, H / 2 + 52, '#ffffff');
+    const nx = STAGES[G.stage];
+    if (nx) { ctx.font = 'bold 18px ' + FONT; outlinedText(`次は STAGE ${G.stage + 1}「${nx.name}」`, W / 2, H / 2 + 86, '#9fc3ff'); }
     if (stateT > 90 && ((stateT >> 5) & 1)) {
       ctx.font = 'bold 18px ' + FONT;
-      outlinedText(`${touch.mode || isTouchDev ? 'タップ / ' : ''}Z / Enter / A ボタンで第${G.loop + 1}周へ（難易度アップ）`, W / 2, H / 2 + 102, '#cfe0ff');
+      outlinedText(`${touch.mode || isTouchDev ? 'タップ / ' : ''}Z / Enter / A ボタンで次のステージへ`, W / 2, H / 2 + 118, '#cfe0ff');
     }
   }
   drawTouchUI();
@@ -1944,9 +2963,29 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
+// 今狙うべき部位（画面座標）。動作確認用：装置 → 装甲板 → ダメージの通るコア → 残っているコア の順
+function weakPoint() {
+  const s = boss && (boss.state === 'fight' || boss.state === 'enter') ? boss : (fort && fort.state === 'alive' ? fort : null);
+  if (!s) return null;
+  if (s === fort && fort.kind === 'turret' && fort.turretsLeft > 0) {
+    for (const e of enemies) if (!e.dead && e.mount && e.mount.obj === fort) return { x: e.cx, y: e.cy, part: 'turret' };
+  }
+  for (const v of s.devices) if (!v.dead) return { x: s.x + v.dx, y: s.oy + v.dy, part: 'device' };
+  for (const p of s.plates) if (p.hp > 0) return { x: s.x + p.dx, y: s.oy + p.dy + p.h / 2, part: 'plate' };
+  let any = null;
+  for (const c of s.cores) {
+    if (c.hp <= 0) continue;
+    const pt = { x: s.x + c.dx, y: s.oy + c.dy, part: 'core', open: !c.guard && !c.hidden && s.state !== 'enter' };
+    if (pt.open) return pt;
+    any = any || pt;
+  }
+  return any;
+}
 // 動作確認用の読み取り口（ゲーム進行には影響なし）
+// fort = 現在の中ボス、boss = 現在のボス、G.stage = 現在のステージ（1〜8）。weak = 今狙うべき部位の座標
 window.__azureVector = { get state() { return state; }, get G() { return G; }, get P() { return P; },
-                         get fort() { return fort; }, get boss() { return boss; }, enemies, ebul, pbul, caps };
+                         get fort() { return fort; }, get boss() { return boss; }, get weak() { return weakPoint(); },
+                         get stage() { return G ? G.stage : 0; }, STAGES, enemies, ebul, pbul, caps };
 })();
 </script>
 </body>
