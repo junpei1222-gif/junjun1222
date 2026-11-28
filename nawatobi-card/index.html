@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#d8f2ff">
+  <title>蒼太の なわとびカード</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Hiragino Sans",
+        "Yu Gothic", Meiryo, sans-serif;
+      color: #193951;
+      background: #eaf8ff;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 90% 0%, #ffffffb3, transparent 38rem),
+        linear-gradient(165deg, #c6ecff 0%, #e3f5ff 48%, #f3fbff 100%);
+    }
+
+    body, button, .track svg {
+      touch-action: manipulation;
+    }
+
+    .page {
+      width: 100%;
+      max-width: 68rem;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 2.5rem;
+      padding-top: max(1.5rem, env(safe-area-inset-top));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-bottom: max(2.5rem, env(safe-area-inset-bottom));
+      padding-left: max(1rem, env(safe-area-inset-left));
+    }
+
+    .page-header, .title-group, .toolbar, .card-heading {
+      display: flex;
+      align-items: center;
+    }
+
+    .page-header {
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 1rem;
+      margin: .25rem 0 1.25rem;
+    }
+
+    .title-group {
+      gap: .7rem;
+      min-width: 0;
+    }
+
+    .rope-mark {
+      flex: none;
+      width: clamp(2.5rem, 7vw, 3.25rem);
+      height: auto;
+    }
+
+    h1, h2 {
+      margin: 0;
+      line-height: 1.3;
+    }
+
+    h1 {
+      font-size: clamp(1.35rem, 4.5vw, 2.3rem);
+      font-weight: 800;
+    }
+
+    .toolbar {
+      flex-wrap: wrap;
+      gap: .5rem;
+    }
+
+    .item-count, .tool-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .35rem;
+      min-height: 44px;
+      padding: .4rem .8rem;
+      border-radius: .85rem;
+      font-size: .9rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .item-count {
+      background: #174a69;
+      color: #fff;
+    }
+
+    #itemCount {
+      color: #ffe18a;
+      font-size: 1.15rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tool-button {
+      border: 1px solid #aacddd;
+      background: #fff;
+      color: #254c64;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .tool-button:active {
+      background: #e9f5fb;
+      transform: translateY(1px);
+    }
+
+    .tool-button svg {
+      flex: none;
+      width: 1.15rem;
+      height: 1.15rem;
+    }
+
+    button:focus-visible, .track [tabindex]:focus-visible {
+      outline: 3px solid #126ab2;
+      outline-offset: 2px;
+    }
+
+    main {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .card {
+      --accent: #1574aa;
+      --tint: #e5f5ff;
+      min-width: 0;
+      padding: clamp(.85rem, 2.7vw, 1.5rem);
+      border: 1px solid #c9e2ee;
+      border-radius: 1.25rem;
+      background: #fff;
+      box-shadow: 0 4px 14px #295c7910;
+    }
+
+    .card-aya {
+      --accent: #924088;
+      --tint: #f9edf8;
+    }
+
+    .card-kousa {
+      --accent: #147863;
+      --tint: #e4f6f0;
+    }
+
+    .card-nijuu {
+      --accent: #975910;
+      --tint: #fff2d8;
+    }
+
+    .card-heading {
+      justify-content: space-between;
+      gap: .75rem;
+      margin-bottom: .75rem;
+    }
+
+    .card-heading h2 {
+      display: flex;
+      align-items: center;
+      gap: .55rem;
+      font-size: clamp(1.1rem, 3vw, 1.45rem);
+    }
+
+    .card-heading h2::before {
+      content: "";
+      width: .35rem;
+      height: 1.05em;
+      border-radius: 1rem;
+      background: var(--accent);
+    }
+
+    .progress {
+      padding: .25rem .75rem;
+      border-radius: 2rem;
+      background: var(--tint);
+      color: var(--accent);
+      font-size: .95rem;
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .track {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .track > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .track [role="button"] {
+      cursor: pointer;
+    }
+
+    .item-pop {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: pop .36s ease-out;
+    }
+
+    @keyframes pop {
+      0%   { opacity: 0; transform: scale(.35); }
+      70%  { opacity: 1; transform: scale(1.18); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    #confetti {
+      position: fixed;
+      z-index: 10;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .confetti-piece {
+      position: absolute;
+      top: 0;
+      width: .55rem;
+      height: .85rem;
+      border-radius: 2px;
+      background: var(--color, #ffc94d);
+      animation: fall var(--duration, 1.8s) linear forwards;
+    }
+
+    @keyframes fall {
+      from { transform: translate3d(0, -2rem, 0) rotate(0deg); }
+      to   { transform: translate3d(var(--drift, 2rem), calc(100vh + 2rem), 0) rotate(420deg); }
+    }
+
+    #popup {
+      position: fixed;
+      z-index: 11;
+      top: 50%;
+      left: 50%;
+      width: max-content;
+      max-width: calc(100% - 2rem);
+      padding: 1rem 1.5rem;
+      border: 3px solid #ffce64;
+      border-radius: 1.25rem;
+      background: #fffaf0;
+      color: #62420d;
+      box-shadow: 0 8px 32px #22455c38;
+      text-align: center;
+      font-size: clamp(1.15rem, 4vw, 1.7rem);
+      font-weight: 800;
+      pointer-events: none;
+      visibility: hidden;
+      opacity: 0;
+      transform: translate(-50%, -42%) scale(.92);
+      transition: opacity .18s, transform .18s, visibility .18s;
+    }
+
+    #popup.show {
+      visibility: visible;
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    @media (max-width: 30rem) {
+      .page {
+        padding-top: max(1rem, env(safe-area-inset-top));
+      }
+
+      .toolbar {
+        gap: .4rem;
+      }
+
+      .tool-button, .item-count {
+        padding-inline: .65rem;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .item-pop, .confetti-piece {
+        animation-duration: 1ms;
+      }
+
+      #popup {
+        transition: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <div class="title-group">
+        <svg class="rope-mark" viewBox="0 0 52 52" aria-hidden="true" focusable="false">
+          <rect x="1" y="1" width="50" height="50" rx="15" fill="#195579"/>
+          <path d="M14 22v7c0 8 4 13 12 13s12-5 12-13v-7" fill="none"
+                stroke="#ffdc79" stroke-width="3.5" stroke-linecap="round"/>
+          <path d="m12 12 2 12m26-12-2 12" fill="none"
+                stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+        <h1>蒼太の なわとびカード</h1>
+      </div>
+      <div class="toolbar">
+        <span class="item-count" aria-live="polite" aria-atomic="true">
+          アイテム <strong id="itemCount">0</strong> 個
+        </span>
+        <button type="button" class="tool-button" id="soundBtn" aria-pressed="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M4 9h4l5-4v14l-5-4H4zM17 9a5 5 0 0 1 0 6m3-9a9 9 0 0 1 0 12"/>
+          </svg>
+          <span id="soundLabel">音：オン</span>
+        </button>
+        <button type="button" class="tool-button" id="resetBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M4 5v6h6M4.5 10a8 8 0 1 1 .8 6"/>
+          </svg>
+          リセット
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="card card-mae" aria-labelledby="title-mae">
+        <div class="card-heading">
+          <h2 id="title-mae">まえとび</h2>
+          <span class="progress" id="prog-mae">0 / 20</span>
+        </div>
+        <div class="track" id="track-mae"></div>
+      </section>
+
+      <section class="card card-aya" aria-labelledby="title-aya">
+        <div class="card-heading">
+          <h2 id="title-aya">あやとび</h2>
+          <span class="progress" id="prog-aya">0 / 10</span>
+        </div>
+        <div class="track" id="track-aya"></div>
+      </section>
+
+      <section class="card card-kousa" aria-labelledby="title-kousa">
+        <div class="card-heading">
+          <h2 id="title-kousa">こうさとび</h2>
+          <span class="progress" id="prog-kousa">0 / 10</span>
+        </div>
+        <div class="track" id="track-kousa"></div>
+      </section>
+
+      <section class="card card-nijuu" aria-labelledby="title-nijuu">
+        <div class="card-heading">
+          <h2 id="title-nijuu">にじゅうとび</h2>
+          <span class="progress" id="prog-nijuu">0 / 10</span>
+        </div>
+        <div class="track" id="track-nijuu"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="confetti" aria-hidden="true"></div>
+  <div id="popup" role="status" aria-live="polite" aria-atomic="true">
+    <span id="popupText"></span>
+  </div>
+
+  <script>
+    const TRACKS = [
+      {
+        id: 'mae', name: 'まえとび', unit: '回',
+        cells: [
+          {v: 50, item: 'coal', ms: false},
+          {v: 100, item: 'torch', ms: false},
+          {v: 150, item: 'apple', ms: false},
+          {v: 200, item: 'bread', ms: false},
+          {v: 250, item: 'iron', ms: true},
+          {v: 300, item: 'redstone', ms: false},
+          {v: 350, item: 'lapis', ms: false},
+          {v: 400, item: 'cookie', ms: false},
+          {v: 450, item: 'heart', ms: false},
+          {v: 500, item: 'gold', ms: true},
+          {v: 550, item: 'book', ms: false},
+          {v: 600, item: 'compass', ms: false},
+          {v: 650, item: 'cake', ms: false},
+          {v: 700, item: 'ender', ms: false},
+          {v: 750, item: 'emerald', ms: true},
+          {v: 800, item: 'star', ms: false},
+          {v: 850, item: 'tnt', ms: false},
+          {v: 900, item: 'creeper', ms: false},
+          {v: 950, item: 'sword', ms: false},
+          {v: 1000, item: 'diamond', ms: true}
+        ]
+      },
+      {
+        id: 'aya', name: 'あやとび', unit: '回',
+        cells: [
+          {v: 5, item: 'butterfly', ms: false},
+          {v: 10, item: 'butterfly', ms: false},
+          {v: 15, item: 'butterfly', ms: false},
+          {v: 20, item: 'butterfly', ms: false},
+          {v: 25, item: 'butterfly', ms: false},
+          {v: 30, item: 'butterfly', ms: false},
+          {v: 35, item: 'butterfly', ms: false},
+          {v: 40, item: 'butterfly', ms: false},
+          {v: 45, item: 'butterfly', ms: false},
+          {v: 50, item: 'butterfly', ms: true}
+        ]
+      },
+      {
+        id: 'kousa', name: 'こうさとび', unit: '回',
+        cells: [
+          {v: 5, item: 'pearl', ms: false},
+          {v: 10, item: 'pearl', ms: false},
+          {v: 15, item: 'pearl', ms: false},
+          {v: 20, item: 'pearl', ms: false},
+          {v: 25, item: 'pearl', ms: false},
+          {v: 30, item: 'pearl', ms: false},
+          {v: 35, item: 'pearl', ms: false},
+          {v: 40, item: 'pearl', ms: false},
+          {v: 45, item: 'pearl', ms: false},
+          {v: 50, item: 'pearl', ms: true}
+        ]
+      },
+      {
+        id: 'nijuu', name: 'にじゅうとび', unit: '回',
+        cells: [
+          {v: 1, item: 'star', ms: false},
+          {v: 2, item: 'star', ms: false},
+          {v: 3, item: 'star', ms: false},
+          {v: 4, item: 'star', ms: false},
+          {v: 5, item: 'star', ms: false},
+          {v: 6, item: 'star', ms: false},
+          {v: 7, item: 'star', ms: false},
+          {v: 8, item: 'star', ms: false},
+          {v: 9, item: 'star', ms: false},
+          {v: 10, item: 'star', ms: true}
+        ]
+      }
+    ];
+
+    const ITEMS = {
+      coal: {
+        pal: {k: '#18202a', d: '#2c3440', m: '#495462', h: '#7b8996'},
+        map: [
+          '....kkk...',
+          '..kkmmmk..',
+          '.kmmhmmmk.',
+          '.kmhhmdmmk',
+          'kmmmmdddmk',
+          'kmdmdddddk',
+          '.kdddddddk',
+          '.kkdddddk.',
+          '...kkkkk..'
+        ]
+      },
+      torch: {
+        pal: {r: '#c84b20', o: '#ff8a28', y: '#ffd047', w: '#fff6ad', k: '#643b23', b: '#975b30', h: '#d99a53'},
+        map: [
+          '.....y....',
+          '....yyo...',
+          '...oyyoo..',
+          '...oywyo..',
+          '...royor..',
+          '....rrr...',
+          '....hbk...',
+          '....bbk...',
+          '....hbk...',
+          '....bkk...'
+        ]
+      },
+      apple: {
+        pal: {b: '#67432a', g: '#49953e', r: '#e83e45', s: '#ae2538', h: '#ffb0a0'},
+        map: [
+          '.....b.gg.',
+          '.....bgg..',
+          '..rrrbrr..',
+          '.rhhrrssr.',
+          'rhhrrrrssr',
+          'rhrrrrrssr',
+          'rrrrrrrssr',
+          '.rrrrrssr.',
+          '..rrsssr..',
+          '...rr.rr..'
+        ]
+      },
+      bread: {
+        pal: {k: '#774326', d: '#ae622d', g: '#e7a24d', h: '#ffda88', b: '#bc7637'},
+        map: [
+          '.....kkk..',
+          '....kgggk.',
+          '...kgghggk',
+          '..kggbdggk',
+          '.kghggbggk',
+          'kggbdgggdk',
+          'kghgbggdk.',
+          'kggggddk..',
+          '.kdddk....',
+          '..kkk.....'
+        ]
+      },
+      iron: {
+        pal: {k: '#526273', d: '#8494a5', s: '#bdcad4', h: '#eff6fb'},
+        map: [
+          '....kkkkk.',
+          '...khhhhsk',
+          '..khhhhssk',
+          '.khhhhssdk',
+          'khhhhsssdk',
+          'kssssssdk.',
+          'kddddddk..',
+          '.kkkkkk...'
+        ]
+      },
+      redstone: {
+        pal: {k: '#81213a', d: '#b82740', r: '#f14349', h: '#ff9290'},
+        map: [
+          '.....k....',
+          '....krk...',
+          '....khk.k.',
+          '.k.krhkkrk',
+          'krkkrhkrdk',
+          'khrkrkrddk',
+          '.krrkrddk.',
+          '.krrrdddk.',
+          '..kddddk..',
+          '...kkkk...'
+        ]
+      },
+      lapis: {
+        pal: {k: '#193c78', d: '#2756a2', b: '#397cdb', h: '#91c7ff', g: '#e8c776'},
+        map: [
+          '....kk....',
+          '...khbk...',
+          '..khbbdk..',
+          '.khbbbdk..',
+          '.kbbgbddk.',
+          'kbbgbbdddk',
+          'kbbbbddgdk',
+          '.kbdddddk.',
+          '..kddddk..',
+          '...kkkk...'
+        ]
+      },
+      cookie: {
+        pal: {k: '#945d32', b: '#e1a358', h: '#f7c986', c: '#603b30'},
+        map: [
+          '...kkkk...',
+          '.kkhbbhkk.',
+          '.khhccbbk.',
+          'khbbccbbbk',
+          'kbbbbbccbk',
+          'kbccbbccbk',
+          'kbccbbbbbk',
+          '.kbbbccbk.',
+          '.kkbbcbkk.',
+          '...kkkk...'
+        ]
+      },
+      heart: {
+        pal: {k: '#9d2740', r: '#ee4658', h: '#ffa1a1', d: '#ce304a'},
+        map: [
+          '.kkk..kkk.',
+          'khhrkkrrrk',
+          'khhrrrrrrk',
+          'khrrrrrrdk',
+          'krrrrrrddk',
+          '.krrrrddk.',
+          '..krrddk..',
+          '...kddk...',
+          '....kk....',
+        ]
+      },
+      gold: {
+        pal: {k: '#945a17', d: '#c6811b', s: '#f3b52b', h: '#ffe887'},
+        map: [
+          '....kkkkk.',
+          '...khhhhsk',
+          '..khhhhssk',
+          '.khhhhssdk',
+          'khhhhsssdk',
+          'kssssssdk.',
+          'kddddddk..',
+          '.kkkkkk...'
+        ]
+      },
+      book: {
+        pal: {k: '#663c30', b: '#a75d3f', h: '#d78a58', w: '#fff4dc', s: '#d7c5a8', r: '#c44043'},
+        map: [
+          '...kkkkkkk',
+          '..khbbbbbk',
+          '.khbbbbbk.',
+          'khbbbbbk.k',
+          'khbbbbk.wk',
+          'kbbbbk.wwk',
+          'kkkkk.wwwk',
+          'kwwwwwwssk',
+          'ksssrsssk.',
+          '.kkkrkkk..',
+          '....r.....'
+        ]
+      },
+      compass: {
+        pal: {k: '#495863', s: '#9baab3', w: '#e8eff1', r: '#e74650', d: '#4d7190'},
+        map: [
+          '...kkkk...',
+          '.kksssskk.',
+          '.kswwwrsk.',
+          'kswwwrrwsk',
+          'kswwrrwwsk',
+          'kswwddwwsk',
+          'kswddwwwsk',
+          '.ksdwwwsk.',
+          '.kksssskk.',
+          '...kkkk...'
+        ]
+      },
+      cake: {
+        pal: {y: '#ffaf2f', c: '#539fc0', k: '#a65c69', w: '#fff5f0', p: '#f5a2bb', b: '#d99861'},
+        map: [
+          '.....y....',
+          '....yy....',
+          '....cc....',
+          '....cw....',
+          '..kkcckk..',
+          '.kwwwwwwk.',
+          'kwwwwwwwwk',
+          'kpwwppwppk',
+          'kbbbbbbbbk',
+          'kppppppppk',
+          '.kkkkkkkk.'
+        ]
+      },
+      ender: {
+        pal: {k: '#19574d', d: '#29866a', g: '#67bc6b', h: '#bef28e', p: '#26353d', w: '#efffd4'},
+        map: [
+          '....kkk....',
+          '..kkgggkk..',
+          '.kdghhhgdk.',
+          'kdghwpphgdk',
+          'kghhppphhgk',
+          'kdghppphgdk',
+          '.kdghhhgdk.',
+          '..kkgggkk..',
+          '....kkk....'
+        ]
+      },
+      emerald: {
+        pal: {k: '#126448', d: '#18875b', g: '#30c77a', h: '#8aeda8', w: '#d6ffdf'},
+        map: [
+          '...kkkk...',
+          '..khhhhk..',
+          '.khwgggdk.',
+          '.khwgggdk.',
+          '.khhgggdk.',
+          '.khhgggdk.',
+          '.khgggddk.',
+          '.kgggdddk.',
+          '..kddddk..',
+          '...kkkk...'
+        ]
+      },
+      star: {
+        pal: {k: '#b67919', y: '#ffd34b', h: '#fff3a7', s: '#efac2b'},
+        map: [
+          '.....k.....',
+          '....kyk....',
+          '....khk....',
+          'kkkkhhykkkk',
+          '.khhyyyyyk.',
+          '..kyyyysk..',
+          '...kyyyk...',
+          '..kyysyyk..',
+          '..kyk.kyk..',
+          '..kk...kk..'
+        ]
+      },
+      tnt: {
+        pal: {k: '#542e31', r: '#dc4144', h: '#ff7462', d: '#ac3036', w: '#fff7e8'},
+        map: [
+          'kkkkkkkkkkk',
+          'khrrhrrhrrk',
+          'krrdrrdrrdk',
+          'wwwwwwwwwww',
+          'kkkwkwkwkkk',
+          'wkwwkkkwwkw',
+          'wkwwkwkwwkw',
+          'wwwwwwwwwww',
+          'krrdrrdrrdk',
+          'kddrddrddrk',
+          'kkkkkkkkkkk'
+        ]
+      },
+      creeper: {
+        pal: {k: '#366839', g: '#72bb59', h: '#97d675', s: '#5ba54d', b: '#203628'},
+        map: [
+          'kkkkkkkkkk',
+          'khgghggsgk',
+          'kggsgghggk',
+          'kgbbgsgbbk',
+          'khbbggsbbk',
+          'kgggbbggsk',
+          'kgsbbbbggk',
+          'kggbbbbsgk',
+          'khgbggbggk',
+          'kkkkkkkkkk'
+        ]
+      },
+      sword: {
+        pal: {k: '#246477', s: '#3ca7bb', a: '#7be4ea', h: '#ddffff', g: '#e5ad49', b: '#80502f'},
+        map: [
+          '........kk',
+          '.......khk',
+          '......khak',
+          '.....khask',
+          '....khask.',
+          '.g.khask..',
+          '.ggkask...',
+          '..ggsk....',
+          '.bbggg....',
+          'bb...g....'
+        ]
+      },
+      diamond: {
+        pal: {k: '#16738d', d: '#22a9c7', a: '#62ddea', h: '#c9faff', w: '#f2ffff'},
+        map: [
+          '..kkkkkkk..',
+          '.khhwahhak.',
+          'khhhaaaahak',
+          'kaahaaaadak',
+          '.kaahhaadk.',
+          '..kaahadk..',
+          '...kahdk...',
+          '....kak....',
+          '.....k.....'
+        ]
+      },
+      butterfly: {
+        pal: {k: '#644087', v: '#9763cb', p: '#ee8ec3', h: '#ffd0e8', b: '#493656'},
+        map: [
+          '.kk.b.b.kk.',
+          'khpk.b.kphk',
+          'khppkbkpphk',
+          'kvppvbvppvk',
+          '.kvvvbvvvk.',
+          '..kkvbvkk..',
+          '.kppvbvppk.',
+          '.kpvvbvvpk.',
+          '..kvk.kvk..',
+          '...k...k...'
+        ]
+      },
+      pearl: {
+        pal: {k: '#8295aa', d: '#b2bed3', s: '#d9deed', p: '#f5eef3', w: '#ffffff'},
+        map: [
+          '...kkkk...',
+          '..kpppsk..',
+          '.kpwwppsk.',
+          'kpwwwpppsk',
+          'kpwwppppsk',
+          'kppppppssk',
+          'ksppppssdk',
+          '.kssssddk.',
+          '..kddsdk..',
+          '...kkkk...'
+        ]
+      }
+    };
+
+    const LS_KEY = 'nawatobi-card-v1';
+const TRACK_COLORS = {mae:'#ffa726', aya:'#f48fb1', kousa:'#81c784', nijuu:'#64b5f6'};
+
+function itemSVG(key, size) {
+  const item = ITEMS[key];
+  if (!item?.map?.[0]?.length) return '';
+
+  const unit = size / Math.max(item.map[0].length, item.map.length);
+  const rects = [];
+
+  item.map.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const pixel = row[x];
+      if (pixel === '.' || !item.pal[pixel]) continue;
+      rects.push(
+        `<rect x="${x * unit}" y="${y * unit}" width="${unit}" height="${unit}" fill="${item.pal[pixel]}"/>`
+      );
+    }
+  });
+
+  return rects.join('');
+}
+
+function* ropeCardTracks() {
+  for (const [key, track] of Object.entries(TRACKS)) {
+    yield [track.id ?? key, Array.isArray(track) ? track : track.cells];
+  }
+}
+
+function buildAll() {
+  const viewBoxes = {
+    mae: '0 0 1000 660',
+    aya: '0 0 1000 380',
+    kousa: '0 0 1000 380',
+    nijuu: '0 0 1000 430'
+  };
+
+  const decorations = {
+    mae: `
+      <g pointer-events="none" stroke-linejoin="round">
+        <path d="M64 66 V18" fill="none" stroke="#795548" stroke-width="5" stroke-linecap="round"/>
+        <path d="M66 18 L97 28 L66 38 Z" fill="#ef5350" stroke="#c62828" stroke-width="2"/>
+      </g>`,
+    aya: '',
+    kousa: `
+      <g transform="translate(921 190)" pointer-events="none" stroke-width="3">
+        <ellipse cx="0" cy="15" rx="47" ry="13" fill="#dcedc8" stroke="#689f38"/>
+        <path d="M30 8 L29 -8 M39 9 L45 -6" fill="none" stroke="#689f38" stroke-linecap="round"/>
+        <circle cx="29" cy="-8" r="3" fill="#4e342e"/>
+        <circle cx="45" cy="-6" r="3" fill="#4e342e"/>
+        <circle cx="-11" cy="-3" r="27" fill="#ffcc80" stroke="#a66a43"/>
+        <circle cx="-11" cy="-3" r="15" fill="#ffe0b2" stroke="#bc8254"/>
+        <path d="M-11 -18 C3 -18 5 1 -7 4 C-17 7 -22 -7 -12 -8"
+              fill="none" stroke="#bc8254" stroke-linecap="round"/>
+      </g>`,
+    nijuu: `
+      <g transform="translate(938 55) rotate(28)" pointer-events="none" stroke-width="3" stroke-linejoin="round">
+        <path d="M-9 24 L0 44 L9 24 Z" fill="#ffa726" stroke="#f57c00"/>
+        <rect x="-15" y="-12" width="30" height="39" rx="5" fill="#eceff1" stroke="#607d8b"/>
+        <path d="M-17 -12 L0 -38 L17 -12 Z" fill="#ef5350" stroke="#c62828"/>
+        <circle cy="3" r="8" fill="#81d4fa" stroke="#457b9d"/>
+      </g>`
+  };
+
+  function center(tid, i) {
+    const row = Math.floor(i / 5);
+    const col = i % 5;
+
+    switch (tid) {
+      case 'mae':
+        return {x: 110 + (row % 2 === 0 ? col : 4 - col) * 195, y: 95 + row * 155};
+      case 'aya':
+        return {x: 110 + col * 195, y: 107 + row * 169};
+      case 'kousa':
+        return {x: 95 + col * 175, y: 107 + row * 169};
+      case 'nijuu':
+        return {x: 95 + col * 175 + row * 55, y: 355 - col * 21 - row * 169};
+    }
+  }
+
+  function shape(tag, geometry, fill, stroke) {
+    return `<${tag} class="cell-shape" ${geometry}
+      fill="${fill}" stroke="${stroke}" stroke-width="4"
+      data-base-fill="${fill}" data-base-stroke="${stroke}"/>`;
+  }
+
+  function cellShapes(tid, milestone) {
+    switch (tid) {
+      case 'mae':
+        return shape('circle', `r="${milestone ? 64 : 54}"`, '#fff8e1', '#8d6e63');
+
+      case 'aya': {
+        const petals = [];
+        for (let n = 0; n < 5; n++) {
+          const angle = (n * 72 - 90) * Math.PI / 180;
+          const cx = 30 * Math.cos(angle);
+          const cy = 30 * Math.sin(angle);
+          petals.push(shape('circle', `cx="${cx}" cy="${cy}" r="26"`, '#fce4ec', '#c77c95'));
+        }
+        petals.push(shape('circle', 'r="24"', '#fff8e1', '#c77c95'));
+        return petals.join('');
+      }
+
+      case 'kousa':
+        return shape('circle', 'r="52"', '#fff8e1', '#79966c');
+
+      case 'nijuu':
+        return [
+          shape('circle', 'cx="-30" cy="3" r="26"', '#ffffff', '#90bada'),
+          shape('circle', 'cx="0" cy="-9" r="33"', '#ffffff', '#90bada'),
+          shape('circle', 'cx="32" cy="3" r="25"', '#ffffff', '#90bada'),
+          shape('rect', 'x="-55" y="0" width="111" height="32" rx="16"', '#ffffff', '#90bada')
+        ].join('');
+    }
+  }
+
+  for (const [tid, cells] of ropeCardTracks()) {
+    const points = cells.map((_, i) => center(tid, i));
+    let path = '';
+
+    if (tid === 'mae') {
+      const d = points.map(({x, y}, i) => `${i === 0 ? 'M' : 'L'} ${x} ${y}`).join(' ');
+      path = `<path d="${d}" fill="none" stroke="#d7ccc8" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round" opacity=".7" pointer-events="none"/>`;
+    }
+
+    const groups = cells.map((cell, i) => {
+      const {x, y} = points[i];
+      const size = cell.ms ? 62 : 52;
+      const hitRadius = tid === 'mae' && cell.ms ? 68 : 60;
+      const item = ITEMS[cell.item];
+      const cols = item.map[0].length;
+      const rows = item.map.length;
+      const unit = size / Math.max(cols, rows);
+      const w = cols * unit;
+      const h = rows * unit;
+
+      return `<g class="cell" data-t="${tid}" data-i="${i}" data-ms="${cell.ms === true}"
+        transform="translate(${x} ${y})">
+        ${cellShapes(tid, cell.ms)}
+        <text class="cell-num" x="0" y="0" text-anchor="middle" dominant-baseline="central"
+          font-size="${tid === 'aya' ? 25 : 31}" font-weight="700"
+          fill="#4e342e" pointer-events="none">${cell.v}</text>
+        <g class="cell-item" style="display:none" pointer-events="none" shape-rendering="crispEdges"
+          transform="translate(${34 - w / 2} ${-20 - h})">
+          <g class="item-art">${itemSVG(cell.item, size)}</g>
+        </g>
+        <circle class="hit" r="${hitRadius}" fill="#000" fill-opacity="0"/>
+      </g>`;
+    });
+
+    document.getElementById(`track-${tid}`).innerHTML =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxes[tid]}" width="100%">
+        ${path}${decorations[tid]}${groups.join('')}
+      </svg>`;
+  }
+}
+
+function paintCell(tid, idx) {
+  const cell = document.querySelector(`#track-${tid} .cell[data-i="${idx}"]`);
+  if (!cell) return;
+
+  const done = state[tid][idx] === true;
+  const highlight = done && cell.dataset.ms === 'true';
+
+  for (const shape of cell.querySelectorAll('.cell-shape')) {
+    shape.setAttribute('fill', done ? TRACK_COLORS[tid] : shape.dataset.baseFill);
+    shape.setAttribute('stroke', highlight ? '#ffb300' : shape.dataset.baseStroke);
+    shape.setAttribute('stroke-width', highlight ? '5' : '4');
+  }
+
+  const num = cell.querySelector('.cell-num');
+  num.setAttribute('fill', done ? '#ffffff' : '#4e342e');
+  num.setAttribute('stroke', done ? '#4e342e' : 'none');
+  if (done) {
+    num.setAttribute('stroke-width', '5');
+    num.setAttribute('paint-order', 'stroke');
+  }
+  cell.querySelector('.cell-item').style.display = done ? '' : 'none';
+}
+
+function paintAll() {
+  for (const [tid, cells] of ropeCardTracks()) {
+    cells.forEach((_, idx) => paintCell(tid, idx));
+  }
+}
+const tracksById = Array.isArray(TRACKS)
+  ? Object.fromEntries(TRACKS.map(track => [track.id ?? track.key, track]))
+  : TRACKS;
+
+function defaultState() {
+  return Object.fromEntries(
+    Object.entries(tracksById).map(([id, track]) => [
+      id,
+      Array(track.cells.length).fill(false)
+    ])
+  );
+}
+
+let state = (() => {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(LS_KEY));
+  } catch {
+    // 保存データを読めない場合は初期状態を使う。
+  }
+  const normalized = {};
+  for (const [id, track] of Object.entries(tracksById)) {
+    normalized[id] = Array.from(
+      {length: track.cells.length},
+      (_, i) => saved?.[id]?.[i] === true
+    );
+  }
+  return normalized;
+})();
+
+function save() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+  } catch {
+    // 保存できない場合も、この画面では遊び続けられる。
+  }
+}
+
+let actx = null;
+let soundOn = true;
+
+function ensureAudio() {
+  if (!soundOn) return;
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!actx) actx = new AudioContextClass();
+    if (actx.state !== 'running') actx.resume().catch(() => {});
+  } catch {
+    // 音声を利用できない場合もタップ処理を続ける。
+  }
+}
+
+function tone(freq, t0, dur, type, gain) {
+  if (!soundOn || !actx) return;
+
+  const oscillator = actx.createOscillator();
+  const envelope = actx.createGain();
+  const end = t0 + dur;
+
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(freq, t0);
+  envelope.gain.setValueAtTime(0, t0);
+  envelope.gain.linearRampToValueAtTime(gain, t0 + Math.min(0.01, dur / 2));
+  envelope.gain.exponentialRampToValueAtTime(0.0001, end);
+
+  oscillator.connect(envelope);
+  envelope.connect(actx.destination);
+  oscillator.onended = () => {
+    oscillator.disconnect();
+    envelope.disconnect();
+  };
+  oscillator.start(t0);
+  oscillator.stop(end);
+  return oscillator;
+}
+
+function playPop() {
+  if (!soundOn || !actx) return;
+  const t0 = actx.currentTime;
+  const oscillator = tone(500, t0, 0.12, 'sine', 0.12);
+  oscillator.frequency.exponentialRampToValueAtTime(900, t0 + 0.12);
+}
+
+function playFanfare(big) {
+  if (!soundOn || !actx) return;
+  const notes = [523.25, 659.25, 783.99, 1046.50];
+  if (big) notes.push(1318.51);
+  const start = actx.currentTime + 0.12;
+  notes.forEach((freq, i) => {
+    const duration = i === notes.length - 1 ? (big ? 0.36 : 0.24) : 0.14;
+    tone(freq, start + i * 0.14, duration, 'triangle', 0.10);
+  });
+}
+
+function updateHUD() {
+  let total = 0;
+  for (const [id, track] of Object.entries(tracksById)) {
+    const count = state[id].filter(value => value === true).length;
+    document.getElementById(`prog-${id}`).textContent = `${count} / ${track.cells.length}`;
+    total += count;
+  }
+  document.getElementById('itemCount').textContent = String(total);
+}
+
+function confettiBurst(n) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const colors = ['#ff6680', '#ffb84d', '#ffe066', '#50cf9b', '#65baff', '#b792ff'];
+  const fragment = document.createDocumentFragment();
+  const pieces = [];
+  for (let i = 0; i < n; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.left = `${Math.random() * 100}%`;
+    piece.style.setProperty('--duration', `${1.3 + Math.random()}s`);
+    piece.style.setProperty('--drift', `${(Math.random() * 8 - 4).toFixed(2)}rem`);
+    piece.style.animationDelay = `${Math.random() * 0.4}s`;
+    piece.style.animationFillMode = 'both';
+    fragment.appendChild(piece);
+    pieces.push(piece);
+  }
+  document.getElementById('confetti').appendChild(fragment);
+  setTimeout(() => pieces.forEach(piece => piece.remove()), 2800);
+}
+
+let popupTimer;
+
+function showPopup(text) {
+  clearTimeout(popupTimer);
+  const popup = document.getElementById('popup');
+  document.getElementById('popupText').textContent = text;
+  popup.classList.add('show');
+  popupTimer = setTimeout(() => popup.classList.remove('show'), 1900);
+}
+
+const lastTap = {};
+
+function onCellTap(tid, idx) {
+  const key = `${tid}:${idx}`;
+  const now = Date.now();
+  if (lastTap[key] !== undefined && now - lastTap[key] < 300) return;
+  lastTap[key] = now;
+
+  ensureAudio();
+  state[tid][idx] = !state[tid][idx];
+  save();
+  paintCell(tid, idx);
+  if (state[tid][idx]) {
+    try {
+      const art = document.querySelector(`#track-${tid} .cell[data-i="${idx}"] .item-art`);
+      if (art) {
+        art.classList.remove('item-pop');
+        void art.getBBox();
+        art.classList.add('item-pop');
+      }
+    } catch {}
+  }
+  updateHUD();
+
+  if (!state[tid][idx]) return;
+  try {
+    playPop();
+  } catch {}
+
+  const track = tracksById[tid];
+  const cell = track.cells[idx];
+  if (!cell.ms) return;
+
+  const big = tid === 'mae' && Number(cell.v) === 1000;
+  try {
+    playFanfare(big);
+  } catch {}
+  confettiBurst(big ? 90 : 45);
+  showPopup(big
+    ? 'なわとびマスター！すごい！'
+    : `${track.name} ${cell.v}${track.unit ?? '回'} たっせい！`);
+}
+
+for (const id of Object.keys(tracksById)) {
+  const container = document.getElementById(`track-${id}`);
+  container.addEventListener('click', e => {
+    const cell = e.target.closest('.cell');
+    if (!cell || cell.dataset.t !== id || !container.contains(cell)) return;
+    const idx = Number(cell.dataset.i);
+    if (Number.isInteger(idx) && idx >= 0 && idx < tracksById[id].cells.length) {
+      onCellTap(cell.dataset.t, idx);
+    }
+  });
+}
+
+document.getElementById('soundBtn').addEventListener('click', e => {
+  soundOn = !soundOn;
+  document.getElementById('soundLabel').textContent = soundOn ? '音：オン' : '音：オフ';
+  e.currentTarget.setAttribute('aria-pressed', String(soundOn));
+  if (soundOn) {
+    ensureAudio();
+  } else if (actx) {
+    actx.suspend().catch(() => {});
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!window.confirm('ほんとうに さいしょから やりなおす？')) return;
+  state = defaultState();
+  save();
+  paintAll();
+  updateHUD();
+});
+
+buildAll();
+paintAll();
+updateHUD();
+</script></body></html>
