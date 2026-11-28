@@ -38,9 +38,14 @@ const BASE_SCROLL = 1.6;           // 強制スクロール速度(px/フレー�
 const FORT_WX = 4300;              // 要塞のワールドX
 const BOSS_AT = 8700;              // ボス出現スクロール位置
 const OPT_GAP = 12;                // オプションの追従間隔（移動履歴フレーム数）
-const SHIELD_HP = 6;
-const PW_LABELS = ['スピード', 'ミサイル', 'ダブル', 'レーザー', 'オプション', 'シールド'];
-const PW_NAMES  = ['スピードアップ！', 'ミサイル装備！', 'ダブル装備！', 'レーザー装備！', 'オプション追加！', 'シールド展開！'];
+const SHIELD_HP = 3;
+const PW_LABELS = ['スピード', 'ミサイル', 'ダブル', 'レーザー', 'オプション', 'シールド', 'ボム'];
+const PW_NAMES  = ['スピードアップ！', 'ミサイル装備！', 'ダブル装備！', 'レーザー装備！', 'オプション追加！', 'シールド展開！', 'ボムストック+1！'];
+const BOMB_MAX = 3;                // ボムの最大所持数
+const BOMB_ENEMY_DMG = 999;        // ボム：画面内の通常敵へのダメージ（雑魚は一掃）
+const BOMB_CORE_DMG = 15;          // ボム：要塞・ボスの各コアへの固定ダメージ（ガード中・隠れ中のコアには通らない）
+const BOMB_INV = 180;              // ボム発動後の無敵時間（フレーム）
+const OPT_HIT_R = 9;               // オプションの被弾判定半径（敵弾の半径を足して判定）
 
 const cv = document.getElementById('c');
 const ctx = cv.getContext && cv.getContext('2d');
@@ -205,7 +210,7 @@ const STAGES = [
 const keys = {}, pressed = {};
 const GAME_CODES = new Set([
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX', 'KeyP', 'KeyR', 'KeyM',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX', 'KeyC', 'KeyP', 'KeyR', 'KeyM',
   'Space', 'Enter', 'NumpadEnter', 'Escape'
 ]);
 window.addEventListener('keydown', e => {
@@ -265,7 +270,7 @@ window.addEventListener('load', () => cv.focus());
 //  タッチ操作（スマートフォン）
 //  ・ボタン以外をドラッグ → 自機が指の移動量だけ相対移動。タッチ中は自動連射
 //  ・指が自機に重なる位置で触れたら、自機を指の少し上へ寄せて隠れないようにする
-//  ・右下：パワーアップ発動、右上：ポーズ（プレイ中、タッチ操作時のみ表示）
+//  ・右下：パワーアップ発動（その左にボム）、右上：ポーズ（プレイ中、タッチ操作時のみ表示）
 //  レターボックスの黒帯も含め画面全体で受け付け、スクロール／ズームは止める。
 // ============================================================
 const isTouchDev = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
@@ -284,10 +289,13 @@ function toGame(t) {
 function tbtnLayout() {
   const k = 1 / (cssScale || 1);
   const r = clamp(34 * k, 40, 84), s = clamp(44 * k, 44, 90);
-  return { pwr: { x: W - r - 16, y: H - r - 44, r }, pause: { x: W - s - 10, y: 8, s } };
+  // ボムボタン：発動ボタンの左。両者の判定余白（各12）が重ならないよう縁どうしを28空ける
+  const br = Math.round(r * 0.72), px = W - r - 16, py = H - r - 44;
+  return { pwr: { x: px, y: py, r }, bomb: { x: px - r - 28 - br, y: py + r - br, r: br }, pause: { x: W - s - 10, y: 8, s } };
 }
 function hitPause(p, L) { const b = L.pause, m = 12; return p.x >= b.x - m && p.x <= b.x + b.s + m && p.y >= b.y - m && p.y <= b.y + b.s + m; }
 function hitPower(p, L) { const b = L.pwr; return Math.hypot(p.x - b.x, p.y - b.y) <= b.r + 12; }
+function hitBomb(p, L) { const b = L.bomb; return Math.hypot(p.x - b.x, p.y - b.y) <= b.r + 12; }
 function onTouchStart(e) {
   e.preventDefault();
   initAudio();
@@ -300,6 +308,7 @@ function onTouchStart(e) {
       const L = tbtnLayout();
       if (hitPause(p, L)) { pressed.TouchPause = true; continue; }
       if (!paused && hitPower(p, L)) { pressed.TouchPower = true; continue; }
+      if (!paused && hitBomb(p, L)) { pressed.TouchBomb = true; continue; }
     } else {
       pressed.TouchTap = true;     // タイトルでスタート／ゲームオーバー・クリア後に進む
     }
@@ -355,7 +364,7 @@ document.addEventListener('contextmenu', e => { if (touch.mode) e.preventDefault
 //  pressed は update() の最後に消えるので、更新0回のフレームでもエッジは次の更新まで残る。
 // ============================================================
 const GP_DEAD = 0.25;
-const GP_BTN = { A: 0, B: 1, X: 2, Y: 3, SELECT: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+const GP_BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, SELECT: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const gpad = { ax: 0, ay: 0, up: false, down: false, left: false, right: false, shot: false };
 const gpPrev = new Map();          // gamepad.index -> 前回のボタン押下配列
 const gpInfo = { count: 0, name: '', standard: true };
@@ -404,6 +413,7 @@ function pollGamepads() {
     if (any) { initAudio(); touch.mode = false; away = false; }
     if (edge(GP_BTN.A) || edge(GP_BTN.X)) pressed.GpShot = true;
     if (edge(GP_BTN.B) || edge(GP_BTN.Y)) pressed.GpPower = true;
+    if (edge(GP_BTN.LB) || edge(GP_BTN.RB)) pressed.GpBomb = true;
     if (edge(GP_BTN.START)) pressed.GpStart = true;
     if (edge(GP_BTN.SELECT)) pressed.GpSelect = true;
     if (now[GP_BTN.A] || now[GP_BTN.X]) gpad.shot = true;
@@ -507,6 +517,7 @@ function sfx(n) {
       case 'pop': noise(0.25, 0.22, 2600); break;
       case 'boom': noise(0.6, 0.4, 1800); tone('sine', 130, 40, 0.5, 0.25); break;
       case 'death': noise(0.95, 0.5, 3000); tone('sawtooth', 420, 50, 0.8, 0.15); break;
+      case 'bomb': noise(1.2, 0.55, 1400); tone('sine', 110, 28, 1.0, 0.3); tone('sawtooth', 240, 60, 0.6, 0.06); break;
       case 'cap': tone('square', 660, 1320, 0.12, 0.05); break;
       case 'power': tone('square', 523, 523, 0.07, 0.05); tone('square', 784, 784, 0.07, 0.05, 0.07); tone('square', 1046, 1046, 0.12, 0.05, 0.14); break;
       case 'deny': tone('square', 170, 120, 0.1, 0.04); break;
@@ -855,6 +866,7 @@ let G = null, P = null;
 const enemies = [], ebul = [], pbul = [], caps = [], parts = [], rings = [], texts = [], fireworks = [];
 let groups = {}, groupSeq = 0;
 let fort = null, boss = null, banner = null, shake = 0;
+let bombFlash = 0;                 // ボム発動時の画面フラッシュ（残りフレーム）
 
 // 難易度：周回 L（大きく上がる）とステージ st（少しずつ上がる）の両方で決める
 function makeDiff(L, st) {
@@ -875,7 +887,8 @@ const bossK = () => 1 + 0.06 * (G.stage - 1);                 // 中ボス・ボ
 
 function makePlayer() {
   const p = { x: 110, y: H / 2, px: 110, py: H / 2, alive: true, inv: 120, respawnT: 0, speedLv: 0, missile: false, double: false,
-              laser: false, options: 0, shield: 0, shieldFlash: 0, gauge: -1, shotCd: 0, missileCd: 0, trail: [], tilt: 0 };
+              laser: false, options: 0, shield: 0, shieldFlash: 0, gauge: -1, shotCd: 0, missileCd: 0, trail: [], tilt: 0,
+              bombs: 0, bombInv: 0 };   // bombs：ボム所持数（死亡しても持ち越す）。bombInv：ボム無敵の残り（表示の区別用）
   resetTrail(p);
   return p;
 }
@@ -888,7 +901,7 @@ function newGame() {
   G = { score: 0, lives: 3, loop: 1, stage: 1, nextExtend: 30000, scrollX: 0, scrollSpeed: BASE_SCROLL,
         events: [], evIdx: 0, t: 0, d: makeDiff(1, 1), bonus: 0, allBonus: 0, final: false, lastBoss: '', hiAtStart: hiScore };
   P = makePlayer();
-  parts.length = 0; rings.length = 0; texts.length = 0; fireworks.length = 0;
+  parts.length = 0; rings.length = 0; texts.length = 0; fireworks.length = 0; bombFlash = 0;
   startStage();
   state = 'play'; paused = false;
   // BGM はスタート操作以降に解禁し、リスタートのたびに頭から流す
@@ -1116,6 +1129,7 @@ function canActivate(i) {
     case 3: return !P.laser;
     case 4: return P.options < 2;
     case 5: return P.shield <= 0;
+    case 6: return P.bombs < BOMB_MAX;
   }
   return false;
 }
@@ -1128,10 +1142,49 @@ function activatePower() {
     case 3: P.laser = true; P.double = false; break;
     case 4: P.options++; break;
     case 5: P.shield = SHIELD_HP; break;
+    case 6: P.bombs++; break;                          // ストックするだけ（発動は useBomb）
   }
   addText(P.x, P.y - 26, PW_NAMES[P.gauge], '#ffd27a');
   P.gauge = -1;
   sfx('power');
+}
+// ボム発動（updatePlayer から呼ぶ＝プレイ中・非ポーズ・生存中のときだけ届く）
+function useBomb() {
+  if (state !== 'play' || paused || !P.alive) return;
+  if (P.bombs <= 0) { sfx('deny'); return; }
+  P.bombs--;
+  // a. 画面内の通常敵に大ダメージ（撃破・加点・爆発は通常の処理に乗る）。
+  //    要塞に載った砲台（封印型の封印解除条件）はギミック部位なので対象外
+  for (const e of enemies) {
+    if (e.dead || e.mount) continue;
+    if (e.cx + e.r < 0 || e.cx - e.r > W || e.cy + e.r < 0 || e.cy - e.r > H) continue;
+    damageEnemy(e, BOMB_ENEMY_DMG);
+  }
+  // b. 要塞・ボスのコアに固定ダメージ（damageCore 経由）。装甲板・装置は壊さない。
+  //    ガード中（封印・閉鎖・バリア・移動中）／隠れているコア、登場中のボス・画面外の要塞には通らない（ギミック優先）。
+  //    対象かどうかは構造物単位（要塞＝alive かつ fort.x < W、ボス＝fight）で決め、コア個別の画面内判定はしない
+  const bombStruct = s => {
+    for (const c of s.cores) {
+      if (c.hp <= 0 || c.hidden) continue;
+      if (s.state !== 'fight' && s.state !== 'alive') break;   // 途中で撃破（dying）になったら以降は打ち切り
+      const sx = s.x + c.dx, sy = s.oy + c.dy;
+      if (c.guard) { c.deny = 6; spark(sx, sy, c.gk === 'barrier' ? '#9ff6ff' : '#c8cce0'); continue; }
+      damageCore(s, c, BOMB_CORE_DMG);
+    }
+  };
+  if (fort && fort.state === 'alive' && fort.x < W) bombStruct(fort);
+  if (boss && boss.state === 'fight') bombStruct(boss);
+  // c. 敵弾を全消去（撃破時の撃ち返し弾もここで消える）
+  for (const b of ebul) parts.push({ x: b.x, y: b.y, vx: 0, vy: 0, life: 16, max: 16, c: '#ffe9b0', s: 3, dead: false });
+  ebul.length = 0;
+  if (parts.length > 800) parts.splice(0, parts.length - 800);
+  // d. 無敵
+  P.inv = Math.max(P.inv, BOMB_INV); P.bombInv = BOMB_INV;
+  // e. 演出
+  bombFlash = 26; shake = Math.max(shake, 16);
+  rings.push({ x: P.x, y: P.y, r: 10, vr: 14, life: 40, max: 40, dead: false });
+  addText(P.x, P.y - 26, 'ボム！', '#ffe9b0');
+  sfx('bomb');
 }
 function touchesTerrain(cx, cy) {
   for (const [px, py] of TERRAIN_PTS) {
@@ -1195,8 +1248,10 @@ function updatePlayer() {
   P.tilt += (clamp(dy + tdy / 5, -1, 1) - P.tilt) * 0.2;
   if (P.x !== ox || P.y !== oy) { P.trail.unshift({ x: P.x, y: P.y }); P.trail.pop(); }
   if (P.inv > 0) P.inv--;
+  if (P.bombInv > 0) P.bombInv--;
   if (P.shieldFlash > 0) P.shieldFlash--;
   if (pressed.KeyX || pressed.GpPower || pressed.TouchPower) activatePower();
+  if (pressed.KeyC || pressed.GpBomb || pressed.TouchBomb) useBomb();
   if (P.shotCd > 0) P.shotCd--;
   if (P.missileCd > 0) P.missileCd--;
   // 固定更新の間に押して離した短押しも拾う（コントローラーは GpShot、短いタップは TouchShot）。タッチ中は自動連射
@@ -1206,10 +1261,10 @@ function updatePlayer() {
   if (touchesTerrain(P.x, P.y)) { killPlayer(); return; }
 }
 // ---- 武器バランス ----
-const SHOT_CD = 7;          // 通常弾（＋ダブル）の発射間隔（フレーム）。押し続けている限り、この間隔で撃ち続ける
+const SHOT_CD = 14;         // 通常弾（＋ダブル）の発射間隔（フレーム）。押し続けている限り、この間隔で撃ち続ける
 const LASER_CD = 4, LASER_V = 17, LASER_LEN = 70;   // 4F毎×17px=68px間隔 < 長さ70px なので途切れない一本のビームに見える
 const LASER_H = 5;          // レーザーの当たり判定の高さ（描画の芯もこの幅）
-const LASER_HIT_IV = 10;    // 同じ対象へのレーザーの再ヒット間隔（フレーム。発射元＝自機／オプションごと）
+const LASER_HIT_IV = 7;     // 同じ対象へのレーザーの再ヒット間隔（フレーム。発射元＝自機／オプションごと）
 const LASER_CORE_MUL = 0.5; // ボス・中ボスのコアへのレーザーダメージ倍率（甲殻越しの減衰ダメージにも掛かる）
 // レーザーがこの対象にダメージを入れてよいか。入れてよければ最終ヒット時刻（G.t）を記録する
 function laserReady(b, t) {
@@ -1552,7 +1607,7 @@ function spawnFort() {
     turretsLeft: 3, turretsTotal: 0, turretsKilled: 0, unsealed: false, name: '要塞', T: {},
     body: [[0, -45, 70, 45], [0, -150, 70, 45], [70, -150, 230, 150], [110, -210, 140, 60]],
     plates: tk ? [8, 26, 44].map(dx => { const hp = Math.round(4 * d.hp); return { dx, dy: -105, w: 9, h: 60, hp, max: hp, flash: 0 }; }) : [],
-    cores: [mkCore(64, -75, 15, 24 * d.hp * k, { guard: true, gk: tk ? 'lock' : 'shut', shutter: !tk, open: 0 })],
+    cores: [mkCore(64, -75, 15, 48 * d.hp * k, { guard: true, gk: tk ? 'lock' : 'shut', shutter: !tk, open: 0 })],
     devices: [],
     onDestroy: destroyFort,
     // 封印解除後に最後の防壁プレートを壊したら、コアが撃てるようになったことを知らせる
@@ -1653,7 +1708,7 @@ const BOSSES = {
     init(b, d, k) {
       b.body = [[-100, -38, 240, 76], [-50, -72, 160, 34], [-50, 38, 160, 34], [-165, -58, 65, 34], [-165, 24, 65, 34],
                 [140, -62, 36, 42], [140, 20, 36, 42]];
-      b.cores = [mkCore(-100, 0, 18, 40 * d.hp * k, { shutter: true, open: 0, guard: true, gk: 'shut' })];
+      b.cores = [mkCore(-100, 0, 18, 80 * d.hp * k, { shutter: true, open: 0, guard: true, gk: 'shut' })];
     },
     update(b) {
       const c = b.core;
@@ -1684,7 +1739,7 @@ const BOSSES = {
       b.plates = [[-166, -30, 12, 24], [-166, 6, 12, 24], [4, -72, 12, 40], [-116, 32, 12, 26]]
         .map(([dx, dy, w, h]) => ({ dx, dy, w, h, hp: ph, max: ph, flash: 0 }));
       b.plateScore = 500;
-      b.cores = [mkCore(-150, 0, 14, 36 * d.hp * k, { guard: true, gk: 'lock' })];
+      b.cores = [mkCore(-150, 0, 14, 72 * d.hp * k, { guard: true, gk: 'lock' })];
     },
     // 防御状態の再計算（毎更新に加え、装甲板が壊れた瞬間にも hitStruct から呼ばれる）
     guard(b) {
@@ -1714,7 +1769,7 @@ const BOSSES = {
     init(b, d, k) {
       b.body = [[-90, -62, 180, 124], [-165, -72, 75, 30], [-165, 42, 75, 30], [90, -44, 56, 88], [-60, -80, 120, 18], [-60, 62, 120, 18]];
       b.hullDmg = 1 / 8;
-      b.cores = [mkCore(-102, 0, 13, 44 * d.hp * k, { col: '#ff4a4a', glow: '255,70,60' })];
+      b.cores = [mkCore(-102, 0, 13, 88 * d.hp * k, { col: '#ff4a4a', glow: '255,70,60' })];
       b.sweep = 0; b.clawSide = 1;
     },
     update(b, d) {
@@ -1737,7 +1792,7 @@ const BOSSES = {
     init(b, d, k) {
       b.body = [[-120, -40, 240, 80], [-30, -92, 96, 52], [-30, 40, 96, 52], [120, -26, 52, 52]];
       b.sockets = [[-134, 0], [-46, -70], [-46, 70]];
-      b.cores = [mkCore(-134, 0, 16, 54 * d.hp * k)];
+      b.cores = [mkCore(-134, 0, 16, 108 * d.hp * k)];
       b.phase = 1; b.spin = 0;
     },
     onHit(b, c) {
@@ -1775,7 +1830,7 @@ const BOSSES = {
     pal: ['#6a9cc8', '#e0f4ff', '#2a4a70', '#ffffff'],
     init(b, d, k) {
       b.body = [[-70, -34, 160, 68], [-140, 20, 72, 46], [38, -92, 96, 46], [90, -20, 60, 40], [-20, 34, 70, 22]];
-      const hp = 26 * d.hp * k;
+      const hp = 52 * d.hp * k;
       b.cores = [mkCore(-152, 42, 15, hp, { label: '左' }), mkCore(24, -69, 15, hp, { label: '右' })];
     },
     onCoreDown(b, c) {
@@ -1811,7 +1866,7 @@ const BOSSES = {
       b.body = [[-72, -56, 150, 112], [78, -36, 52, 72], [-40, -100, 22, 44], [-40, 56, 22, 44]];
       const dh = Math.max(1, Math.round(9 * d.hp * k));
       b.devices = [[-29, -112], [-29, 112]].map(([dx, dy]) => ({ dx, dy, r: 12, hp: dh, max: dh, flash: 0, dead: false, respT: 0, prog: 0 }));
-      b.cores = [mkCore(-86, 0, 17, 40 * d.hp * k, { guard: true, gk: 'barrier' })];
+      b.cores = [mkCore(-86, 0, 17, 80 * d.hp * k, { guard: true, gk: 'barrier' })];
       b.spin = 0; b.downT = 0;
     },
     onDeviceDown(b) {
@@ -1856,7 +1911,7 @@ const BOSSES = {
     pal: ['#4a4a58', '#a8a8b8', '#202028', '#ffcc66'],
     init(b, d, k) {
       b.body = [[-70, -70, 140, 140], [-96, -16, 26, 32], [70, -44, 40, 88], [-40, -90, 80, 20], [-40, 70, 80, 20]];
-      b.cores = [mkCore(-118, 0, 15, 40 * d.hp * k)];
+      b.cores = [mkCore(-118, 0, 15, 80 * d.hp * k)];
       b.th = Math.PI; b.dir = 1; b.orbR = 118; b.turnT = 300;
     },
     update(b) {
@@ -1884,7 +1939,7 @@ const BOSSES = {
       b.plates = [[-214, -30, 11, 60], [-60, -124, 12, 30], [-60, 94, 12, 30]]
         .map(([dx, dy, w, h]) => ({ dx, dy, w, h, hp: ph, max: ph, flash: 0 }));
       b.plateScore = 800;
-      b.cores = [mkCore(-182, 0, 20, 72 * d.hp * k, { guard: true, gk: 'lock' })];
+      b.cores = [mkCore(-182, 0, 20, 144 * d.hp * k, { guard: true, gk: 'lock' })];
       b.phase = 1; b.cyc = 0; b.sock = 0; b.spin = 0;
     },
     onPlateDown(b) {
@@ -2023,7 +2078,7 @@ function updateCaps() {
       const dx = c.x - P.x, dy = c.y - P.y;
       if (dx * dx + dy * dy < 22 * 22) {
         c.dead = true;
-        P.gauge = (P.gauge + 1) % 6;
+        P.gauge = (P.gauge + 1) % PW_LABELS.length;
         addScore(100);
         sfx('cap');
       }
@@ -2064,12 +2119,44 @@ function updateEBullets() {
         continue;
       }
     }
+    // オプションの被弾：弾（前位置→現位置）とオプション（前フレーム位置→現位置）を同時に直線移動したとみなし、
+    // 相対移動の線分と原点の最短距離で判定（sweptD2 と同じ考え方。すり抜け防止）。
+    // オプションの前フレーム位置は軌跡の1つ古い点。軌跡は自機が動いたフレームだけ進むので、動いていなければ現在位置のまま。
+    // シールドはオプションを守らない。無敵中でも消滅する。1発で消えるのは1個だけ
+    if (P.options > 0) {
+      const rr = OPT_HIT_R + b.r, ax = b.x - b.vx, ay = b.y - b.vy;
+      const moved = P.x !== P.px || P.y !== P.py;
+      let hit = -1;
+      for (let i = 0; i < P.options; i++) {
+        const o = optPos(i);
+        const q = moved ? P.trail[Math.min(P.trail.length - 1, (i + 1) * OPT_GAP + 1)] : o;
+        if (segPtD2(ax - q.x, ay - q.y, b.x - o.x, b.y - o.y, 0, 0) < rr * rr) { hit = i; break; }
+      }
+      if (hit >= 0) {
+        // 命中したオプション自身を消す：そのオプションが参照する軌跡区間を取り除き、後続のオプションを1つ分前に詰める。
+        // 軌跡の長さは resetTrail と同じ（OPT_GAP*2+2）に保つため、末尾の点の複製で埋め戻す
+        const o = optPos(hit), n = P.trail.length;
+        b.dead = true;
+        P.trail.splice((hit + 1) * OPT_GAP, OPT_GAP);
+        while (P.trail.length < n) { const t = P.trail[P.trail.length - 1]; P.trail.push({ x: t.x, y: t.y }); }
+        P.options--;
+        explode(o.x, o.y, 1);
+        continue;
+      }
+    }
     if (P.inv <= 0) {
       const rr = b.r + 3;
       if (sweptD2(b, 0) < rr * rr) { b.dead = true; killPlayer(); }
     }
   }
   compact(ebul);
+}
+// 線分 (ax,ay)-(bx,by) と点 (px,py) の最短距離の2乗
+function segPtD2(ax, ay, bx, by, px, py) {
+  const mx = bx - ax, my = by - ay, L = mx * mx + my * my;
+  const t = L > 0 ? clamp(((px - ax) * mx + (py - ay) * my) / L, 0, 1) : 0;
+  const dx = ax + mx * t - px, dy = ay + my * t - py;
+  return dx * dx + dy * dy;
 }
 // エンディングの花火（効果音なし・暗幕の上に描く）
 const FW_COLORS = ['#ff6a80', '#ffd27a', '#7fffd0', '#9fc3ff', '#d68bff', '#ffffff'];
@@ -2120,6 +2207,7 @@ function update() {
   if (gpNotice && --gpNotice.t <= 0) gpNotice = null;
   if (!(state === 'play' && paused)) { updateStars(); nebX += 0.12; }
   if (shake > 0) { shake *= 0.88; if (shake < 0.3) shake = 0; }
+  if (bombFlash > 0 && !(state === 'play' && paused)) bombFlash--;
   if (pressed.KeyM) { muted = !muted; applyMute(); }
   const start = pressed.KeyZ || pressed.Space || pressed.Enter || pressed.NumpadEnter;
   const gpOk = pressed.GpShot || pressed.GpStart;   // コントローラーの決定（A / X / START）
@@ -2253,11 +2341,23 @@ function drawPlayer() {
   for (let i = P.options - 1; i >= 0; i--) { const o = optPos(i); drawOption(o.x, o.y); }
   const blink = P.inv > 0 && ((frameCount >> 2) & 1);   // 無敵中は点滅
   if (!blink) drawShip(P.x, P.y, P.tilt);
+  if (P.bombInv > 0 && P.inv > 0) {
+    // ボム無敵中：金色の回転リングを重ねて、通常の復帰無敵（点滅のみ）と区別する。終わり際は点滅して薄れる
+    const k = Math.min(1, P.bombInv / 40), on = P.bombInv > 40 || ((frameCount >> 2) & 1);
+    if (on) {
+      ctx.save(); ctx.translate(P.x + 2, P.y); ctx.rotate(frameCount * 0.12);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = `rgba(255,214,110,${0.35 + 0.45 * k})`; ctx.lineWidth = 2.5;
+      ctx.setLineDash([10, 6]); ctx.beginPath(); ctx.arc(0, 0, 30, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = `rgba(255,200,90,${0.08 + 0.1 * k})`; circle(0, 0, 30);
+      ctx.restore();
+    }
+  }
   if (P.shield > 0) {
     const a = 0.35 + 0.5 * (P.shield / SHIELD_HP);
     ctx.strokeStyle = P.shieldFlash > 0 ? '#ffffff' : `rgba(120,240,255,${a})`;
     ctx.lineWidth = 3;
-    const layers = Math.min(3, Math.ceil(P.shield / 2));
+    const layers = Math.min(3, P.shield);   // 残り回数そのまま（3→2→1と減っていく）
     for (let k = 0; k < layers; k++) { ctx.beginPath(); ctx.arc(P.x + 6, P.y, 20 + k * 5, -1.1, 1.1); ctx.stroke(); }
   }
 }
@@ -2725,10 +2825,11 @@ function drawHUD() {
   const hudR = (touchUIOn() && state === 'play') ? tbtnLayout().pause.x - 12 : W - 16;
   ctx.textAlign = 'right';  outlinedText(`STAGE ${G.stage}　第${G.loop}周　残機 ${Math.max(0, G.lives)}`, hudR, 10, '#ffffff');
   // パワーアップゲージ
-  const cw = 118, ch = 22, gx = (W - cw * 6) / 2, gy = H - ch - 6;
-  ctx.fillStyle = 'rgba(4,8,24,0.72)'; ctx.fillRect(gx - 4, gy - 4, cw * 6 + 8, ch + 8);
+  // 枠数は PW_LABELS.length（7枠）。右側にボム数・盾の表示を置く余白を残すため1枠の幅は 102
+  const NG = PW_LABELS.length, cw = 102, ch = 22, gx = (W - cw * NG) / 2, gy = H - ch - 6, gr = gx + cw * NG;
+  ctx.fillStyle = 'rgba(4,8,24,0.72)'; ctx.fillRect(gx - 4, gy - 4, cw * NG + 8, ch + 8);
   ctx.font = 'bold 13px ' + FONT; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < NG; i++) {
     const x = gx + i * cw, active = P.gauge === i, avail = canActivate(i);
     if (active) {
       const p = 0.65 + 0.35 * Math.sin(frameCount * 0.25);
@@ -2740,13 +2841,17 @@ function drawHUD() {
     let label = PW_LABELS[i];
     if (i === 0 && P.speedLv > 0) label += ' ' + '▶'.repeat(P.speedLv);
     if (i === 4 && P.options > 0) label += ` ${P.options}`;
+    if (i === 6 && P.bombs > 0) label += ` ${P.bombs}`;
     ctx.fillStyle = active ? (avail ? '#241000' : '#5a3a20') : avail ? '#cfe0ff' : 'rgba(140,155,190,0.38)';
     ctx.fillText(label, x + cw / 2, gy + ch / 2 + 1);
     if (!avail) { ctx.fillStyle = active ? '#5a3a20' : 'rgba(140,155,190,0.38)'; ctx.fillRect(x + 14, gy + ch / 2, cw - 28, 1.5); }
   }
   ctx.textAlign = 'right'; ctx.font = 'bold 12px ' + FONT;
-  ctx.fillStyle = '#9fb6e8'; ctx.fillText('X:発動', gx - 10, gy + ch / 2 + 1);
-  if (P.shield > 0) { ctx.textAlign = 'left'; ctx.fillStyle = '#8ff4ff'; ctx.fillText('盾 ' + '■'.repeat(P.shield), gx + cw * 6 + 10, gy + ch / 2 + 1); }
+  ctx.fillStyle = '#9fb6e8'; ctx.fillText('X:発動 C:ボム', gx - 10, gy + ch / 2 + 1);
+  // ゲージ右側：ボム所持数（常時）→ その右に盾の残り回数（展開中のみ）
+  ctx.textAlign = 'left';
+  ctx.fillStyle = P.bombs > 0 ? '#ffd27a' : 'rgba(160,150,120,0.6)'; ctx.fillText('ボム ×' + P.bombs, gr + 10, gy + ch / 2 + 1);
+  if (P.shield > 0) { ctx.fillStyle = '#8ff4ff'; ctx.fillText('盾 ' + '■'.repeat(P.shield), gr + 62, gy + ch / 2 + 1); }
   // ボス耐久
   const s = boss && boss.state !== 'dying' ? boss : (fort && fort.state === 'alive' && fort.x < W ? fort : null);
   if (s) {
@@ -2798,11 +2903,11 @@ function drawTitle() {
   ctx.font = 'bold 20px ' + FONT; ctx.fillStyle = '#9fc3ff'; ctx.fillText('A Z U R E   V E C T O R', W / 2, 190);
   ctx.font = '16px ' + FONT; ctx.fillStyle = '#d8e4ff';
   const lines = ['移動：矢印キー / WASD　　ショット：Z / スペース（長押しで連射）',
-                 'パワーアップ発動：X　　ポーズ：P（ポーズ中にRでリスタート）　　音のON/OFF：M',
+                 'パワーアップ発動：X　ボム：C　ポーズ：P（ポーズ中にRでリスタート）　音のON/OFF：M',
                  'オレンジのカプセルを取るとゲージが進む。光っている項目をXで発動！',
-                 'コントローラー：スティック/十字キーで移動　A・Xでショット　B・Yで発動　START/SELECTでポーズ'];
+                 'コントローラー：スティック/十字キーで移動　A・Xショット　B・Y発動　LB・RBボム　START/SELECTポーズ'];
   const showTouch = isTouchDev || touch.mode;
-  if (showTouch) lines.push('スマホ：画面をドラッグで移動（触れている間は自動連射）　右下ボタンで発動　右上でポーズ');
+  if (showTouch) lines.push('スマホ：画面をドラッグで移動（触れている間は自動連射）　右下ボタンで発動・その左でボム　右上でポーズ');
   const ly0 = showTouch ? 250 : 262, lsp = showTouch ? 27 : 28;
   lines.forEach((l, i) => ctx.fillText(l, W / 2, ly0 + i * lsp));
   if (showTouch && window.innerHeight > window.innerWidth) {
@@ -2858,6 +2963,11 @@ function render() {
   drawEBullets();
   drawParticles();
   ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  if (bombFlash > 0) {   // ボムの画面フラッシュ（白→金に退色）
+    const k = bombFlash / 26;
+    ctx.fillStyle = `rgba(255,${235 - 40 * (1 - k) | 0},${200 - 120 * (1 - k) | 0},${0.75 * k})`;
+    ctx.fillRect(0, 0, W, H);
+  }
   drawHUD();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (state === 'play' && paused) {
@@ -2941,6 +3051,14 @@ function drawTouchUI() {
   } else {
     ctx.font = `bold ${Math.round(pw.r * 0.34)}px ${FONT}`; ctx.fillText('発動', pw.x, pw.y);
   }
+  // 発動ボタンの左：ボム（所持数を表示。所持していれば金色）
+  const bm = L.bomb, has = P.alive && P.bombs > 0;
+  ctx.fillStyle = has ? 'rgba(255,200,80,0.42)' : 'rgba(8,16,44,0.5)';
+  ctx.beginPath(); ctx.arc(bm.x, bm.y, bm.r, 0, TAU); ctx.fill();
+  ctx.strokeStyle = has ? '#ffe9b0' : 'rgba(150,190,255,0.6)'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.fillStyle = has ? '#fff4d8' : 'rgba(200,215,255,0.75)';
+  ctx.font = `bold ${Math.round(bm.r * 0.4)}px ${FONT}`; ctx.fillText('ボム', bm.x, bm.y - bm.r * 0.2);
+  ctx.font = `bold ${Math.round(bm.r * 0.36)}px ${FONT}`; ctx.fillText('×' + P.bombs, bm.x, bm.y + bm.r * 0.36);
   ctx.restore();
 }
 
